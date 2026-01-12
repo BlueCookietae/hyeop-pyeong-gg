@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import LoginButton from '@/components/LoginButton';
 import { db, auth } from '@/lib/firebase';
@@ -27,6 +27,39 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const [isScrolled, setIsScrolled] = useState(false);
+  
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const touchStartX = useRef(0);
+  const touchEndX = useRef(0);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchEndX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = () => {
+    const minSwipeDistance = 50; 
+    const distance = touchStartX.current - touchEndX.current;
+    
+    if (distance > minSwipeDistance) {
+      if (currentTab < 2) setCurrentTab(p => p + 1);
+    }
+    else if (distance < -minSwipeDistance) {
+      if (currentTab > 0) setCurrentTab(p => p - 1);
+    }
+  };
+
   const getFilteredMatches = () => {
     const kstToday = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Seoul"})).toISOString().split('T')[0];
     if (currentTab === 0) return allMatches.filter(m => m.date.split(' ')[0] < kstToday).sort((a, b) => b.date.localeCompare(a.date));
@@ -38,42 +71,97 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   useEffect(() => { setExpandedId(null); }, [currentTab]);
 
   return (
-    <div className="bg-slate-950 min-h-screen text-slate-50 font-sans p-4 overflow-x-hidden">
-      <div className="max-w-md mx-auto pb-20">
-        <header className="py-8 flex flex-col items-center gap-2">
-          <LoginButton />
-          <h1 className="text-3xl font-black text-cyan-400 italic tracking-tighter uppercase">협곡평점.GG</h1>
-        </header>
+    <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
+      
+      {/* Sticky Header & Tabs Container */}
+      <div className={`sticky top-0 z-40 transition-all duration-300 border-b border-slate-800/50 ${isScrolled ? 'bg-slate-950/90 backdrop-blur-md shadow-lg' : 'bg-slate-950'}`}>
+        <div className="max-w-md mx-auto">
+          
+          {/* Header */}
+          <header className={`flex items-center justify-between px-5 transition-all duration-300 ${isScrolled ? 'py-3' : 'py-6'}`}>
+            <h1 className={`font-black text-cyan-400 italic tracking-tighter uppercase transition-all duration-300 origin-left ${isScrolled ? 'text-xl' : 'text-3xl'}`}>
+              협곡평점.GG
+            </h1>
+            
+            {/* ⭐ isScrolled(compact) 상태 전달 */}
+            <div className="flex-shrink-0">
+              <LoginButton compact={isScrolled} />
+            </div>
+          </header>
 
-        <div className="flex items-center justify-between mb-8 px-2">
-          <button onClick={() => setCurrentTab(p => Math.max(0, p - 1))} disabled={currentTab === 0} className={`text-2xl font-black ${currentTab===0?'text-slate-800':'text-cyan-400'}`}>←</button>
-          <div className="flex flex-col items-center">
-            <span className="text-xl font-black text-white italic tracking-tighter uppercase">{TAB_NAMES[currentTab]}</span>
-            <div className="flex gap-1 mt-1">{[0, 1, 2].map(i => <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === currentTab ? 'bg-cyan-400' : 'bg-slate-800'}`} />)}</div>
-          </div>
-          <button onClick={() => setCurrentTab(p => Math.min(2, p + 1))} disabled={currentTab === 2} className={`text-2xl font-black ${currentTab===2?'text-slate-800':'text-cyan-400'}`}>→</button>
-        </div>
-
-        <div className="min-h-[50vh]">
-          <AnimatePresence mode='wait'>
-            <motion.div key={currentTab} initial={{ x: 10, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -10, opacity: 0 }} className="space-y-6">
-              {displayMatches.length === 0 ? (
-                <div className="text-center text-slate-600 font-bold py-20 bg-slate-900/30 rounded-3xl border border-slate-800 border-dashed">경기가 없습니다.</div>
-              ) : (
-                displayMatches.map((match) => (
-                  <MatchCard 
-                    key={match.id} 
-                    match={match} 
-                    homeRoster={teamRosters[match.home.name] || POSITIONS.map(p => `${match.home.name} ${p}`)}
-                    awayRoster={teamRosters[match.away.name] || POSITIONS.map(p => `${match.away.name} ${p}`)}
-                    isOpen={expandedId === match.id}
-                    onToggle={() => setExpandedId(expandedId === match.id ? null : match.id)}
+          {/* Tabs */}
+          <div className="flex items-center justify-between px-4 pb-3">
+            <button 
+              onClick={() => setCurrentTab(p => Math.max(0, p - 1))} 
+              disabled={currentTab === 0} 
+              className={`text-xl font-bold w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 0 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
+            >
+              &lt;
+            </button>
+            
+            <div className="flex flex-col items-center">
+              <span className="text-lg font-black text-white italic tracking-tighter uppercase transition-all">
+                {TAB_NAMES[currentTab]}
+              </span>
+              <div className="flex gap-1.5 mt-1">
+                {[0, 1, 2].map(i => (
+                  <motion.div 
+                    key={i} 
+                    animate={{ 
+                      backgroundColor: i === currentTab ? '#22d3ee' : '#1e293b',
+                      scale: i === currentTab ? 1.2 : 1 
+                    }}
+                    className="w-1.5 h-1.5 rounded-full" 
                   />
-                ))
-              )}
-            </motion.div>
-          </AnimatePresence>
+                ))}
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setCurrentTab(p => Math.min(2, p + 1))} 
+              disabled={currentTab === 2} 
+              className={`text-xl font-bold w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 2 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
+            >
+              &gt;
+            </button>
+          </div>
         </div>
+      </div>
+
+      {/* Main Content */}
+      <div 
+        className="max-w-md mx-auto p-4 min-h-[50vh]"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <AnimatePresence mode='wait'>
+          <motion.div 
+            key={currentTab} 
+            initial={{ x: 20, opacity: 0 }} 
+            animate={{ x: 0, opacity: 1 }} 
+            exit={{ x: -20, opacity: 0 }} 
+            transition={{ duration: 0.2 }}
+            className="space-y-6"
+          >
+            {displayMatches.length === 0 ? (
+              <div className="text-center text-slate-600 font-bold py-20 bg-slate-900/30 rounded-3xl border border-slate-800 border-dashed">
+                경기가 없습니다.
+              </div>
+            ) : (
+              displayMatches.map((match) => (
+                <MatchCard 
+                  key={match.id} 
+                  match={match} 
+                  homeRoster={teamRosters[match.home.name] || POSITIONS.map(p => `${match.home.name} ${p}`)}
+                  awayRoster={teamRosters[match.away.name] || POSITIONS.map(p => `${match.away.name} ${p}`)}
+                  isOpen={expandedId === match.id}
+                  onToggle={() => setExpandedId(expandedId === match.id ? null : match.id)}
+                />
+              ))
+            )}
+          </motion.div>
+        </AnimatePresence>
         <Footer />
       </div>
     </div>
@@ -83,7 +171,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
-  const [hasParticipated, setHasParticipated] = useState(false); // ⭐ 이미 참여했는지 여부
+  const [hasParticipated, setHasParticipated] = useState(false); 
   const [averages, setAverages] = useState<Record<string, number>>({});
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
   const [showTooltip, setShowTooltip] = useState(false);
@@ -116,7 +204,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   useEffect(() => {
     if (isOpen) { 
       fetchAverages(); 
-      fetchMyRatings(); // ⭐ 열릴 때 내 참여 여부도 확인
+      fetchMyRatings(); 
     } 
     else { setIsEditing(false); setShowTooltip(false); }
   }, [isOpen]);
@@ -149,7 +237,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     const docId = `${user.uid}_${match.id}`;
     const snap = await getDoc(doc(db, "matchRatings", docId));
     if (snap.exists()) {
-      setHasParticipated(true); // ⭐ 참여함 체크
+      setHasParticipated(true);
       const saved = snap.data().ratings;
       const parsed: Record<string, number> = {};
       Object.entries(saved).forEach(([name, val]: any) => parsed[name] = val.score);
@@ -170,7 +258,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const handleStartEdit = async (e: any) => {
     e.stopPropagation();
     if (!auth.currentUser) return alert("로그인이 필요한 서비스입니다.");
-    // 이미 useEffect에서 데이터를 가져왔으므로 바로 편집 모드 진입
     setIsEditing(true);
   };
 
@@ -188,7 +275,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
       });
       alert("평점이 반영되었습니다!");
       setIsEditing(false);
-      setHasParticipated(true); // 제출 성공 시 참여 상태로 변경
+      setHasParticipated(true); 
       await fetchAverages(true); 
     } catch (e) { alert("제출 실패"); }
   };
@@ -211,8 +298,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
       <div className="p-8 pt-12 pb-4 text-center">
         <div className="flex justify-between items-start">
-          
-          {/* HOME TEAM */}
           <div className="flex-1 flex flex-col items-center gap-1">
             <div className="h-6 mb-1 flex items-end">
               {isFinished && (
@@ -233,7 +318,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
             </div>
           </div>
 
-          {/* CENTER INFO */}
           <div className="px-2 pt-8 flex flex-col items-center">
             {isTomorrow && <span className="bg-amber-400 text-black text-[9px] font-black px-1.5 py-0.5 rounded mb-1 animate-pulse">내일</span>}
             <span className="text-[10px] text-slate-500 font-bold mb-2 tracking-widest">{formattedDate} {timeStr}</span>
@@ -244,7 +328,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
             )}
           </div>
 
-          {/* AWAY TEAM */}
           <div className="flex-1 flex flex-col items-center gap-1">
              <div className="h-6 mb-1 flex items-end">
                {isFinished && (
@@ -272,7 +355,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-xl border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
             <div className="p-5 space-y-4">
               
-              {/* 선수 평점 리스트 */}
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx];
                 const ap = awayRoster[idx];
@@ -295,7 +377,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                 );
               })}
 
-              {/* 도파민 지수 */}
               <div className="pt-2 pb-2">
                 <div className="flex flex-col items-center gap-1">
                    <div className="flex items-center gap-2">
@@ -329,7 +410,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                     </button>
                   ) : (
                     <div className="flex gap-3">
-                      {/* ⭐ [수정됨] 글래스모피즘 & 텍스트 조건부 변경 */}
                       <button 
                         onClick={handleStartEdit} 
                         className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
@@ -397,40 +477,43 @@ function ResultBar({ score, align, theme }: any) {
   );
 }
 
-// ⭐ [수정됨] 인터랙티브 바 개선 (햅틱, 디자인)
+// ⭐ [수정됨] 렉 없는 슬라이더 (transition 제거, touch-none 적용)
 function InteractiveBar({ score, align, color, onChange }: any) {
   const barColor = color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400';
   const rotationClass = align === 'right' ? 'rotate-180' : ''; 
   
-  // 햅틱 피드백 함수 (아이폰 스타일의 짧은 진동)
+  // 햅틱 쓰로틀링 (너무 잦은 진동 방지)
+  const lastHapticRef = useRef(0);
   const triggerHaptic = () => {
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(5); // 5ms의 아주 짧은 진동
+    const now = Date.now();
+    if (now - lastHapticRef.current > 50) { // 50ms 간격 제한
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(5); 
+      }
+      lastHapticRef.current = now;
     }
   };
 
   const handleChange = (e: any) => {
     const newVal = parseFloat(e.target.value);
     onChange(newVal);
-    triggerHaptic(); // 값 변경 시 진동
+    triggerHaptic(); 
   };
 
   return (
     <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'} relative group`}>
-      {/* 바 높이를 h-8 (32px)로 키워서 터치 영역 확보 */}
       <div className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
         
-        {/* 실제 채워지는 게이지 */}
-        <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} opacity-80 transition-all duration-75`} />
+        {/* ⭐ transition-all 제거하여 렉(Lag) 없앰 */}
+        <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} opacity-80`} />
         
-        {/* ⭐ 점수를 바 중앙에 표시 (absolute center) */}
         <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none`}>
           <span className="text-white font-black text-xs drop-shadow-md tracking-wider">
             {score.toFixed(1)}
           </span>
         </div>
-
-        {/* 투명한 Range Input (터치 영역) */}
+        
+        {/* ⭐ touch-none: 슬라이더 드래그 시 화면 스크롤 방지 */}
         <input 
           type="range" 
           min="0" 
@@ -438,10 +521,9 @@ function InteractiveBar({ score, align, color, onChange }: any) {
           step="0.1" 
           value={score} 
           onChange={handleChange} 
-          className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20 ${rotationClass}`} 
+          className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20 touch-none ${rotationClass}`} 
         />
       </div>
-      {/* 기존에 있던 옆구리 숫자 div는 삭제했습니다! (공간 확보) */}
     </div>
   );
 }
