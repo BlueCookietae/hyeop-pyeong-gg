@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation';
 import LoginButton from '@/components/LoginButton';
 import { db, auth } from '@/lib/firebase';
 import { collection, query, getDocs, where, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'; // 로그인용
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'; 
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
-import html2canvas from 'html2canvas';
+import * as htmlToImage from 'html-to-image'; 
 
 const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
 const FUN_KEY = 'match_fun_score'; 
@@ -21,16 +21,37 @@ const POS_ICONS: Record<string, string> = {
   'SUP': '/icons/support.png'
 };
 
+const getDisplayImgUrl = (url: string) => {
+  if (!url) return '';
+  if (url.startsWith('//')) return `https:${url}`;
+  if (url.startsWith('http://')) return url.replace('http://', 'https://');
+  return url;
+};
+
+const getProxyImgUrl = (url: string) => {
+  const cleanUrl = getDisplayImgUrl(url).replace(/^https?:\/\//, '');
+  return `https://wsrv.nl/?url=${cleanUrl}&output=png`;
+};
+
+const dataURItoBlob = (dataURI: string) => {
+  const byteString = atob(dataURI.split(',')[1]);
+  const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+  const ab = new ArrayBuffer(byteString.length);
+  const ia = new Uint8Array(ab);
+  for (let i = 0; i < byteString.length; i++) {
+    ia[i] = byteString.charCodeAt(i);
+  }
+  return new Blob([ab], { type: mimeString });
+};
+
 export default function HomeView({ initialMatches, initialRosters }: { initialMatches: any[], initialRosters: any }) {
   const [allMatches, setAllMatches] = useState<any[]>(initialMatches);
   const [teamRosters, setTeamRosters] = useState<Record<string, string[]>>(initialRosters);
-  
   const [currentTab, setCurrentTab] = useState(1);
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
 
-  // ⭐ 탭 변경 시 맨 위로 스크롤
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setExpandedId(null);
@@ -38,16 +59,14 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   
   useEffect(() => {
     const handleScroll = () => {
-      // 50px 이상일 때 부드럽게 줄어들도록
-      setIsScrolled(window.scrollY > 50);
+      setIsScrolled(window.scrollY > 0);
     };
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // --- 스와이프 로직 개선 ---
   const touchStartX = useRef(0);
-  const touchStartY = useRef(0); // Y축 추가 (대각선 방지)
+  const touchStartY = useRef(0); 
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.targetTouches[0].clientX;
@@ -57,14 +76,12 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const handleTouchEnd = (e: React.TouchEvent) => {
     const touchEndX = e.changedTouches[0].clientX;
     const touchEndY = e.changedTouches[0].clientY;
-    
     const distanceX = touchStartX.current - touchEndX;
     const distanceY = touchStartY.current - touchEndY;
 
-    // ⭐ 세로 스크롤 의도가 강하면(30px 이상 위아래로 움직임) 탭 이동 취소
-    if (Math.abs(distanceY) > 30) return;
+    if (Math.abs(distanceY) > 30) return; 
 
-    const minSwipeDistance = 80; // 기준을 좀 더 엄격하게 (너무 쉽게 넘어가는거 방지)
+    const minSwipeDistance = 80; 
     
     if (distanceX > minSwipeDistance) {
       if (currentTab < 2) setCurrentTab(p => p + 1);
@@ -85,79 +102,62 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
-      
-      {/* Sticky Header */}
-      <div className={`sticky top-0 z-40 transition-all duration-500 border-b border-slate-800/50 ${isScrolled ? 'bg-slate-950/90 backdrop-blur-md shadow-lg h-28' : 'bg-slate-950 h-36'}`}>
+      {/* 수정 2: 헤더 높이를 h-16(64px) -> h-[74px]로 살짝 늘려 여유 확보 */}
+      <div className={`sticky top-0 z-40 transition-all duration-300 border-b border-slate-800/50 ${isScrolled ? 'bg-slate-950/95 backdrop-blur-md shadow-lg h-[74px]' : 'bg-slate-950 h-28'}`}>
         <div className="max-w-md mx-auto h-full flex flex-col justify-between">
           
-          <header className="flex items-center justify-between px-5 pt-4 flex-1">
-            {/* ⭐ GPU 가속(scale)을 사용하여 렉 없이 부드럽게 작아짐 */}
-            <div className={`origin-left transition-transform duration-500 ease-[cubic-bezier(0.33,1,0.68,1)] ${isScrolled ? 'scale-75' : 'scale-100'}`}>
-               <h1 className="font-black text-cyan-400 italic tracking-tighter uppercase text-3xl">
-                 협곡평점.GG
-               </h1>
+          <header className={`flex items-center justify-between px-5 transition-all duration-300 ${isScrolled ? 'pt-2' : 'pt-4'}`}>
+            <div className={`origin-left transition-transform duration-300 ${isScrolled ? 'scale-75' : 'scale-100'}`}>
+               <h1 className="font-black text-cyan-400 italic tracking-tighter uppercase text-2xl">협곡평점.GG</h1>
             </div>
-            <div className="flex-shrink-0">
+            <div className={`flex-shrink-0 transition-transform duration-300 ${isScrolled ? 'scale-75 origin-right' : 'scale-90 origin-right'}`}>
               <LoginButton compact={isScrolled} />
             </div>
           </header>
 
-          <div className="flex items-center justify-between px-4 pb-2">
+          {/* 수정 2: 네비게이션 영역 패딩(pb)을 살짝 늘려 숨쉴 공간 확보 */}
+          <div className={`flex items-center justify-between px-4 transition-all duration-300 ${isScrolled ? 'pb-2' : 'pb-2'}`}>
             <button 
               onClick={() => setCurrentTab(p => Math.max(0, p - 1))} 
               disabled={currentTab === 0} 
-              className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full transition-colors ${currentTab === 0 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 0 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
             >
-              &lt;
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
             </button>
             
-            <div className="flex flex-col items-center">
-              <span className="text-lg font-black text-white italic tracking-tighter uppercase transition-all">
-                {TAB_NAMES[currentTab]}
-              </span>
-              <div className="flex gap-1.5 mt-1">
+            <div className="flex flex-col items-center justify-center">
+              <div className={`overflow-hidden transition-all duration-300 flex flex-col items-center ${isScrolled ? 'h-0 opacity-0' : 'h-7 opacity-100'}`}>
+                {/* 수정 1: 이탤릭체 텍스트 잘림 방지를 위해 pr-2 (우측 여백) 추가 */}
+                <span className="text-base font-black text-white italic tracking-tighter uppercase whitespace-nowrap pr-2 pl-1">{TAB_NAMES[currentTab]}</span>
+              </div>
+              
+              <div className={`flex gap-1.5 transition-all duration-300 ${isScrolled ? 'mt-0' : 'mt-1'}`}>
                 {[0, 1, 2].map(i => (
-                  <motion.div 
-                    key={i} 
-                    animate={{ 
-                      backgroundColor: i === currentTab ? '#22d3ee' : '#1e293b',
-                      scale: i === currentTab ? 1.2 : 1 
-                    }}
-                    className="w-1.5 h-1.5 rounded-full" 
-                  />
+                  <motion.div key={i} animate={{ backgroundColor: i === currentTab ? '#22d3ee' : '#334155', scale: i === currentTab ? 1.2 : 1 }} className="w-1.5 h-1.5 rounded-full" />
                 ))}
               </div>
             </div>
-
+            
             <button 
               onClick={() => setCurrentTab(p => Math.min(2, p + 1))} 
               disabled={currentTab === 2} 
-              className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full transition-colors ${currentTab === 2 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 2 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
             >
-              &gt;
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
             </button>
           </div>
         </div>
       </div>
 
-      <div 
-        className="max-w-md mx-auto p-4 min-h-[50vh]"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
+      <div className="max-w-md mx-auto p-4 min-h-[50vh]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <AnimatePresence mode='wait'>
-          <motion.div 
-            key={currentTab} 
-            initial={{ x: 20, opacity: 0 }} 
-            animate={{ x: 0, opacity: 1 }} 
-            exit={{ x: -20, opacity: 0 }} 
-            transition={{ duration: 0.2 }}
-            className="space-y-6"
-          >
+          <motion.div key={currentTab} initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
             {displayMatches.length === 0 ? (
-              <div className="text-center text-slate-600 font-bold py-20 bg-slate-900/30 rounded-3xl border border-slate-800 border-dashed">
-                경기가 없습니다.
-              </div>
+              <div className="text-center text-slate-600 font-bold py-20 bg-slate-900/30 rounded-3xl border border-slate-800 border-dashed">경기가 없습니다.</div>
             ) : (
               displayMatches.map((match) => (
                 <MatchCard 
@@ -168,7 +168,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                   isOpen={expandedId === match.id}
                   onToggle={(isOpen: boolean) => {
                      setExpandedId(isOpen ? null : match.id);
-                     if (!isOpen) setIsScrolled(true); // 펼칠 때 헤더 강제 축소
+                     if (!isOpen) setIsScrolled(true); 
                   }}
                 />
               ))
@@ -215,19 +215,18 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   };
   const isTomorrow = checkIsTomorrow();
 
-  // ⭐ 펼쳐질 때 스크롤 조정 & 데이터 로드
   useEffect(() => {
     if (isOpen) { 
       fetchAverages(); 
       fetchMyRatings(); 
-      
-      // 헤더 높이(약 112px)만큼 빼고 스크롤
       setTimeout(() => {
         if (cardRef.current) {
-          const y = cardRef.current.getBoundingClientRect().top + window.scrollY - 120; // 120 = 헤더 높이 + 여유
+          // 수정 3: 헤더 높이(74px) + 여백(약 26px) = 100px
+          // 기존 120에서 100으로 줄여서 너무 멀리 가지 않게 조정하되, 헤더에 가리지 않게 함
+          const y = cardRef.current.getBoundingClientRect().top + window.scrollY - 100;
           window.scrollTo({ top: y, behavior: 'smooth' });
         }
-      }, 300); // 애니메이션 시간 대기
+      }, 300);
     } 
     else { setIsEditing(false); setShowTooltip(false); }
   }, [isOpen]);
@@ -253,10 +252,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
   const fetchMyRatings = async () => {
     const user = auth.currentUser;
-    if (!user) {
-        setHasParticipated(false);
-        return;
-    }
+    if (!user) { setHasParticipated(false); return; }
     const docId = `${user.uid}_${match.id}`;
     const snap = await getDoc(doc(db, "matchRatings", docId));
     if (snap.exists()) {
@@ -274,14 +270,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     }
   };
 
-  const handleCardClick = () => {
-    if (!isEditing) onToggle(isOpen);
-  };
+  const handleCardClick = () => { if (!isEditing) onToggle(isOpen); };
 
   const handleStartEdit = async (e: any) => {
     e.stopPropagation();
     if (!auth.currentUser) {
-        // ⭐ 확인 누르면 바로 로그인
         if(window.confirm("로그인이 필요한 서비스입니다.\n로그인 하시겠습니까?")) {
             try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch(e) { console.error(e); }
         }
@@ -309,40 +302,81 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     } catch (e) { alert("제출 실패"); }
   };
 
-  const handleRatingChange = (name: string, val: number) => {
-    setMyRatings(prev => ({ ...prev, [name]: val }));
-  };
+  const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
-  // ⭐ 이미지 저장 (Download)
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
     
-    // 버튼 숨기기 위해 class 추가
-    cardRef.current.classList.add('download-mode');
+    cardRef.current.classList.add('download-mode'); 
+    await document.fonts.ready; 
+
+    const images = cardRef.current.getElementsByTagName('img');
+    const originalSrcs: string[] = [];
+    const promises: Promise<void>[] = [];
+
+    for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        originalSrcs[i] = img.src; 
+
+        const src = img.src;
+        if (src && !src.startsWith('data:') && !src.includes('localhost') && !src.includes(window.location.host)) {
+             const proxyUrl = getProxyImgUrl(src);
+             img.crossOrigin = "anonymous"; 
+             img.src = proxyUrl; 
+
+             promises.push(new Promise((resolve) => {
+                 if (img.complete) resolve();
+                 else {
+                     img.onload = () => resolve();
+                     img.onerror = () => resolve(); 
+                 }
+             }));
+        }
+    }
     
+    await Promise.all(promises);
+
     try {
-        const canvas = await html2canvas(cardRef.current, {
-            backgroundColor: '#0f172a', // 배경색 지정
-            scale: 2, // 고화질
-            useCORS: true // 이미지 로드 허용
+        const dataUrl = await htmlToImage.toPng(cardRef.current, {
+            backgroundColor: '#020617', 
+            pixelRatio: 2, 
+            skipAutoScale: true,
         });
+
+        if (navigator.share) {
+            const blob = dataURItoBlob(dataUrl);
+            const file = new File([blob], `rating.png`, { type: 'image/png' });
+            
+            if (navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: '협곡평점.GG',
+                        text: '내 경기 평점을 확인해보세요!',
+                    });
+                    return; 
+                } catch (shareError) {
+                    console.log('Share cancelled or failed', shareError);
+                }
+            }
+        }
+
         const link = document.createElement('a');
         link.download = `협곡평점_${match.home.name}_vs_${match.away.name}.png`;
-        link.href = canvas.toDataURL();
+        link.href = dataUrl;
         link.click();
+
     } catch(err) {
+        console.error("Image generation failed:", err);
         alert("이미지 저장에 실패했습니다.");
     } finally {
+        for (let i = 0; i < images.length; i++) {
+            images[i].src = originalSrcs[i];
+            images[i].removeAttribute('crossOrigin');
+        }
         cardRef.current.classList.remove('download-mode');
     }
-  };
-
-  // ⭐ 링크 공유 (Share)
-  const handleShare = (e: any) => {
-    e.stopPropagation();
-    const url = window.location.href;
-    navigator.clipboard.writeText(url).then(() => alert("링크가 복사되었습니다!"));
   };
 
   const formattedDate = match.date.substring(5, 10).replace('-', '.'); 
@@ -355,9 +389,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
         onClick={handleCardClick} 
         className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}
     >
-      {/* 다운로드 모드일 때 버튼 숨기는 CSS */}
-      <style jsx>{`
+      <style jsx global>{`
         .download-mode .hide-on-download { display: none !important; }
+        .download-mode .team-name-text { display: none !important; }
+        .download-mode .team-logo-img { margin-bottom: 5px; } 
       `}</style>
 
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
@@ -374,11 +409,16 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
             <div className="h-6 mb-1 flex items-end">
               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
             </div>
-            <div className="w-16 h-16 flex items-center justify-center">
-              {match.home.logo ? <img src={match.home.logo} className="w-full h-full object-contain drop-shadow-xl" /> : match.home.name}
+            <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
+              {match.home.logo ? (
+                <img 
+                    src={getDisplayImgUrl(match.home.logo)} 
+                    className="w-full h-full object-contain drop-shadow-xl" 
+                    alt={match.home.name}
+                />
+              ) : match.home.name}
             </div>
-            {/* ⭐ 펼치면 팀 이름 사라짐 (Collapse) */}
-            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden">
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text">
                 <div className="h-10 flex items-center justify-center">
                     <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.home.name}</span>
                 </div>
@@ -401,10 +441,16 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
              <div className="h-6 mb-1 flex items-end">
                {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
             </div>
-            <div className="w-16 h-16 flex items-center justify-center">
-              {match.away.logo ? <img src={match.away.logo} className="w-full h-full object-contain drop-shadow-xl" /> : match.away.name}
+            <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
+              {match.away.logo ? (
+                <img 
+                    src={getDisplayImgUrl(match.away.logo)} 
+                    className="w-full h-full object-contain drop-shadow-xl" 
+                    alt={match.away.name}
+                />
+              ) : match.away.name}
             </div>
-            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden">
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text">
                 <div className="h-10 flex items-center justify-center">
                     <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.away.name}</span>
                 </div>
@@ -415,7 +461,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
       <AnimatePresence>
         {isOpen && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-xl border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
             <div className="p-5 space-y-4">
               
               {POSITIONS.map((pos, idx) => {
@@ -443,9 +489,9 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
               <div className="pt-2 pb-2">
                 <div className="flex flex-col items-center gap-1">
                    <div className="flex items-center gap-2">
-                     <span className="text-xs font-black text-amber-400 tracking-wider">⚡ 도파민 지수</span>
+                     <span className="text-xs font-black text-amber-400 tracking-wider whitespace-nowrap">⚡ 도파민 지수</span>
                      <span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)} <span className="text-[10px] text-slate-500 not-italic">/ 5.0</span></span>
-                     <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-600 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors">?</button>
+                     <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-600 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
                    </div>
                    <AnimatePresence>
                     {showTooltip && (
@@ -467,12 +513,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                     <button onClick={handleSubmit} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-500 shadow-lg shadow-indigo-500/30 transition-all">제출 완료!</button>
                   </div>
                 ) : (
-                  // ⭐ [수정됨] 버튼 그룹 + 공유/다운로드 버튼
                   <div className="flex gap-2 items-center hide-on-download">
                     <div className="flex-1 flex gap-2">
                         <button 
                             onClick={handleStartEdit} 
-                            className="flex-[2] py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
+                            className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
                         >
                             <span>{hasParticipated ? '✏️' : '🫠'}</span> 
                             <span>{hasParticipated ? '평점 수정' : '내 평점 등록'}</span>
@@ -485,15 +530,9 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                         </button>
                     </div>
                     
-                    {/* 우측 유틸 버튼 (공유 / 다운로드) */}
-                    <div className="flex gap-2">
-                        <button onClick={handleShare} className="w-10 h-10 border border-slate-700 bg-slate-800 text-slate-400 rounded-xl flex items-center justify-center hover:bg-slate-700 hover:text-white active:scale-95 transition-all">
-                            🔗
-                        </button>
-                        <button onClick={handleDownload} className="w-10 h-10 border border-slate-700 bg-slate-800 text-slate-400 rounded-xl flex items-center justify-center hover:bg-slate-700 hover:text-white active:scale-95 transition-all">
-                            📥
-                        </button>
-                    </div>
+                    <button onClick={handleDownload} className="w-5 h-5 flex items-center justify-center active:scale-95 transition-all">
+                        <img src="/icons/download.png" className="w-full h-full object-contain opacity-80 hover:opacity-100" alt="download" />
+                    </button>
                   </div>
                 )}
               </motion.div>
@@ -541,7 +580,7 @@ function ResultBar({ score, align, theme }: any) {
         <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? bgClass : 'bg-transparent'}`} />
       </div>
       <div className={`w-10 h-6 flex items-center justify-center rounded-md ${hasData ? textBgClass : 'bg-slate-800'} shadow-md`}>
-         <span className={`text-[11px] font-bold ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span>
+         <span className={`text-[11px] font-bold leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span>
       </div>
     </div>
   );
@@ -573,19 +612,11 @@ function InteractiveBar({ score, align, color, onChange }: any) {
       <div className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
         <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} opacity-80`} />
         <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none`}>
-          <span className="text-white font-black text-xs drop-shadow-md tracking-wider">
+          <span className="text-white font-black text-xs drop-shadow-md tracking-wider leading-none">
             {score.toFixed(1)}
           </span>
         </div>
-        <input 
-          type="range" 
-          min="0" 
-          max="10" 
-          step="0.1" 
-          value={score} 
-          onChange={handleChange} 
-          className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20 touch-none ${rotationClass}`} 
-        />
+        <input type="range" min="0" max="10" step="0.1" value={score} onChange={handleChange} className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20 touch-none ${rotationClass}`} />
       </div>
     </div>
   );
