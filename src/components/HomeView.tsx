@@ -5,8 +5,10 @@ import { useRouter } from 'next/navigation';
 import LoginButton from '@/components/LoginButton';
 import { db, auth } from '@/lib/firebase';
 import { collection, query, getDocs, where, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'; // 로그인용
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
+import html2canvas from 'html2canvas';
 
 const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
 const FUN_KEY = 'match_fun_score'; 
@@ -26,36 +28,48 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [currentTab, setCurrentTab] = useState(1);
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
   const [isScrolled, setIsScrolled] = useState(false);
+
+  // ⭐ 탭 변경 시 맨 위로 스크롤
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setExpandedId(null);
+  }, [currentTab]);
   
   useEffect(() => {
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 20);
+      // 50px 이상일 때 부드럽게 줄어들도록
+      setIsScrolled(window.scrollY > 50);
     };
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // --- 스와이프 로직 개선 ---
   const touchStartX = useRef(0);
-  const touchEndX = useRef(0);
+  const touchStartY = useRef(0); // Y축 추가 (대각선 방지)
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.targetTouches[0].clientX;
+    touchStartY.current = e.targetTouches[0].clientY;
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    touchEndX.current = e.targetTouches[0].clientX;
-  };
-
-  const handleTouchEnd = () => {
-    const minSwipeDistance = 50; 
-    const distance = touchStartX.current - touchEndX.current;
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
     
-    if (distance > minSwipeDistance) {
+    const distanceX = touchStartX.current - touchEndX;
+    const distanceY = touchStartY.current - touchEndY;
+
+    // ⭐ 세로 스크롤 의도가 강하면(30px 이상 위아래로 움직임) 탭 이동 취소
+    if (Math.abs(distanceY) > 30) return;
+
+    const minSwipeDistance = 80; // 기준을 좀 더 엄격하게 (너무 쉽게 넘어가는거 방지)
+    
+    if (distanceX > minSwipeDistance) {
       if (currentTab < 2) setCurrentTab(p => p + 1);
     }
-    else if (distance < -minSwipeDistance) {
+    else if (distanceX < -minSwipeDistance) {
       if (currentTab > 0) setCurrentTab(p => p - 1);
     }
   };
@@ -68,33 +82,31 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   };
 
   const displayMatches = getFilteredMatches();
-  useEffect(() => { setExpandedId(null); }, [currentTab]);
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
       
-      {/* Sticky Header & Tabs Container */}
-      <div className={`sticky top-0 z-40 transition-all duration-300 border-b border-slate-800/50 ${isScrolled ? 'bg-slate-950/90 backdrop-blur-md shadow-lg' : 'bg-slate-950'}`}>
-        <div className="max-w-md mx-auto">
+      {/* Sticky Header */}
+      <div className={`sticky top-0 z-40 transition-all duration-500 border-b border-slate-800/50 ${isScrolled ? 'bg-slate-950/90 backdrop-blur-md shadow-lg h-28' : 'bg-slate-950 h-36'}`}>
+        <div className="max-w-md mx-auto h-full flex flex-col justify-between">
           
-          {/* Header */}
-          <header className={`flex items-center justify-between px-5 transition-all duration-300 ${isScrolled ? 'py-3' : 'py-6'}`}>
-            <h1 className={`font-black text-cyan-400 italic tracking-tighter uppercase transition-all duration-300 origin-left ${isScrolled ? 'text-xl' : 'text-3xl'}`}>
-              협곡평점.GG
-            </h1>
-            
-            {/* ⭐ isScrolled(compact) 상태 전달 */}
+          <header className="flex items-center justify-between px-5 pt-4 flex-1">
+            {/* ⭐ GPU 가속(scale)을 사용하여 렉 없이 부드럽게 작아짐 */}
+            <div className={`origin-left transition-transform duration-500 ease-[cubic-bezier(0.33,1,0.68,1)] ${isScrolled ? 'scale-75' : 'scale-100'}`}>
+               <h1 className="font-black text-cyan-400 italic tracking-tighter uppercase text-3xl">
+                 협곡평점.GG
+               </h1>
+            </div>
             <div className="flex-shrink-0">
               <LoginButton compact={isScrolled} />
             </div>
           </header>
 
-          {/* Tabs */}
-          <div className="flex items-center justify-between px-4 pb-3">
+          <div className="flex items-center justify-between px-4 pb-2">
             <button 
               onClick={() => setCurrentTab(p => Math.max(0, p - 1))} 
               disabled={currentTab === 0} 
-              className={`text-xl font-bold w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 0 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
+              className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full transition-colors ${currentTab === 0 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
             >
               &lt;
             </button>
@@ -120,7 +132,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
             <button 
               onClick={() => setCurrentTab(p => Math.min(2, p + 1))} 
               disabled={currentTab === 2} 
-              className={`text-xl font-bold w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 2 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
+              className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full transition-colors ${currentTab === 2 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}
             >
               &gt;
             </button>
@@ -128,11 +140,9 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         </div>
       </div>
 
-      {/* Main Content */}
       <div 
         className="max-w-md mx-auto p-4 min-h-[50vh]"
         onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
         <AnimatePresence mode='wait'>
@@ -156,7 +166,10 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                   homeRoster={teamRosters[match.home.name] || POSITIONS.map(p => `${match.home.name} ${p}`)}
                   awayRoster={teamRosters[match.away.name] || POSITIONS.map(p => `${match.away.name} ${p}`)}
                   isOpen={expandedId === match.id}
-                  onToggle={() => setExpandedId(expandedId === match.id ? null : match.id)}
+                  onToggle={(isOpen: boolean) => {
+                     setExpandedId(isOpen ? null : match.id);
+                     if (!isOpen) setIsScrolled(true); // 펼칠 때 헤더 강제 축소
+                  }}
                 />
               ))
             )}
@@ -170,6 +183,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 
 function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const router = useRouter();
+  const cardRef = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [hasParticipated, setHasParticipated] = useState(false); 
   const [averages, setAverages] = useState<Record<string, number>>({});
@@ -201,10 +215,19 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   };
   const isTomorrow = checkIsTomorrow();
 
+  // ⭐ 펼쳐질 때 스크롤 조정 & 데이터 로드
   useEffect(() => {
     if (isOpen) { 
       fetchAverages(); 
       fetchMyRatings(); 
+      
+      // 헤더 높이(약 112px)만큼 빼고 스크롤
+      setTimeout(() => {
+        if (cardRef.current) {
+          const y = cardRef.current.getBoundingClientRect().top + window.scrollY - 120; // 120 = 헤더 높이 + 여유
+          window.scrollTo({ top: y, behavior: 'smooth' });
+        }
+      }, 300); // 애니메이션 시간 대기
     } 
     else { setIsEditing(false); setShowTooltip(false); }
   }, [isOpen]);
@@ -252,12 +275,18 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   };
 
   const handleCardClick = () => {
-    if (!isEditing) onToggle();
+    if (!isEditing) onToggle(isOpen);
   };
 
   const handleStartEdit = async (e: any) => {
     e.stopPropagation();
-    if (!auth.currentUser) return alert("로그인이 필요한 서비스입니다.");
+    if (!auth.currentUser) {
+        // ⭐ 확인 누르면 바로 로그인
+        if(window.confirm("로그인이 필요한 서비스입니다.\n로그인 하시겠습니까?")) {
+            try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch(e) { console.error(e); }
+        }
+        return;
+    }
     setIsEditing(true);
   };
 
@@ -284,12 +313,53 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     setMyRatings(prev => ({ ...prev, [name]: val }));
   };
 
+  // ⭐ 이미지 저장 (Download)
+  const handleDownload = async (e: any) => {
+    e.stopPropagation();
+    if (!cardRef.current) return;
+    
+    // 버튼 숨기기 위해 class 추가
+    cardRef.current.classList.add('download-mode');
+    
+    try {
+        const canvas = await html2canvas(cardRef.current, {
+            backgroundColor: '#0f172a', // 배경색 지정
+            scale: 2, // 고화질
+            useCORS: true // 이미지 로드 허용
+        });
+        const link = document.createElement('a');
+        link.download = `협곡평점_${match.home.name}_vs_${match.away.name}.png`;
+        link.href = canvas.toDataURL();
+        link.click();
+    } catch(err) {
+        alert("이미지 저장에 실패했습니다.");
+    } finally {
+        cardRef.current.classList.remove('download-mode');
+    }
+  };
+
+  // ⭐ 링크 공유 (Share)
+  const handleShare = (e: any) => {
+    e.stopPropagation();
+    const url = window.location.href;
+    navigator.clipboard.writeText(url).then(() => alert("링크가 복사되었습니다!"));
+  };
+
   const formattedDate = match.date.substring(5, 10).replace('-', '.'); 
   const timeStr = match.date.split(' ')[1];
   const funScore = isEditing ? (myRatings[FUN_KEY] ?? 0) : (averages[FUN_KEY] ?? 0);
 
   return (
-    <div onClick={handleCardClick} className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}>
+    <div 
+        ref={cardRef}
+        onClick={handleCardClick} 
+        className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}
+    >
+      {/* 다운로드 모드일 때 버튼 숨기는 CSS */}
+      <style jsx>{`
+        .download-mode .hide-on-download { display: none !important; }
+      `}</style>
+
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
         <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg ${isEditing ? 'bg-indigo-900 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
           <span className="text-[10px] font-black tracking-widest uppercase">{match.league} • {match.round}</span>
@@ -298,26 +368,24 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
       <div className="p-8 pt-12 pb-4 text-center">
         <div className="flex justify-between items-start">
+          
+          {/* HOME */}
           <div className="flex-1 flex flex-col items-center gap-1">
             <div className="h-6 mb-1 flex items-end">
-              {isFinished && (
-                <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white shadow-red-500/50' : 'bg-blue-500 text-white shadow-blue-500/50'}`}>
-                  {isHomeWin ? 'WIN' : 'LOSE'}
-                </span>
-              )}
+              {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             <div className="w-16 h-16 flex items-center justify-center">
-              {match.home.logo ? (
-                <img src={match.home.logo} className="w-full h-full object-contain drop-shadow-xl" />
-              ) : (
-                <span className="text-2xl font-black text-slate-500">{match.home.name.substring(0, 2)}</span>
-              )}
+              {match.home.logo ? <img src={match.home.logo} className="w-full h-full object-contain drop-shadow-xl" /> : match.home.name}
             </div>
-            <div className="h-10 flex items-center justify-center">
-              <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.home.name}</span>
-            </div>
+            {/* ⭐ 펼치면 팀 이름 사라짐 (Collapse) */}
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden">
+                <div className="h-10 flex items-center justify-center">
+                    <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.home.name}</span>
+                </div>
+            </motion.div>
           </div>
 
+          {/* CENTER */}
           <div className="px-2 pt-8 flex flex-col items-center">
             {isTomorrow && <span className="bg-amber-400 text-black text-[9px] font-black px-1.5 py-0.5 rounded mb-1 animate-pulse">내일</span>}
             <span className="text-[10px] text-slate-500 font-bold mb-2 tracking-widest">{formattedDate} {timeStr}</span>
@@ -328,24 +396,19 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
             )}
           </div>
 
+          {/* AWAY */}
           <div className="flex-1 flex flex-col items-center gap-1">
              <div className="h-6 mb-1 flex items-end">
-               {isFinished && (
-                 <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white shadow-red-500/50' : 'bg-blue-500 text-white shadow-blue-500/50'}`}>
-                   {isAwayWin ? 'WIN' : 'LOSE'}
-                 </span>
-              )}
+               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             <div className="w-16 h-16 flex items-center justify-center">
-              {match.away.logo ? (
-                <img src={match.away.logo} className="w-full h-full object-contain drop-shadow-xl" />
-              ) : (
-                <span className="text-2xl font-black text-slate-500">{match.away.name.substring(0, 2)}</span>
-              )}
+              {match.away.logo ? <img src={match.away.logo} className="w-full h-full object-contain drop-shadow-xl" /> : match.away.name}
             </div>
-            <div className="h-10 flex items-center justify-center">
-              <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.away.name}</span>
-            </div>
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden">
+                <div className="h-10 flex items-center justify-center">
+                    <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.away.name}</span>
+                </div>
+            </motion.div>
           </div>
         </div>
       </div>
@@ -404,27 +467,34 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                     <button onClick={handleSubmit} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-500 shadow-lg shadow-indigo-500/30 transition-all">제출 완료!</button>
                   </div>
                 ) : (
-                  !isStarted ? (
-                    <button disabled className="w-full py-4 bg-slate-900/50 border border-slate-800 text-slate-600 rounded-xl font-bold text-[10px] cursor-not-allowed flex items-center justify-center gap-2">
-                       <span className="text-base">🔒</span><span>아직 경기가 시작되지 않았어요</span>
-                    </button>
-                  ) : (
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={handleStartEdit} 
-                        className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
-                      >
-                         <span>{hasParticipated ? '✏️' : '🫠'}</span> 
-                         <span>{hasParticipated ? '평점 수정하기' : '내 평점 등록하기'}</span>
-                      </button>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} 
-                        className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
-                      >
-                        <span>💬</span> 한줄평 보기
-                      </button>
+                  // ⭐ [수정됨] 버튼 그룹 + 공유/다운로드 버튼
+                  <div className="flex gap-2 items-center hide-on-download">
+                    <div className="flex-1 flex gap-2">
+                        <button 
+                            onClick={handleStartEdit} 
+                            className="flex-[2] py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
+                        >
+                            <span>{hasParticipated ? '✏️' : '🫠'}</span> 
+                            <span>{hasParticipated ? '평점 수정' : '내 평점 등록'}</span>
+                        </button>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} 
+                            className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
+                        >
+                            <span>💬</span> 리뷰
+                        </button>
                     </div>
-                  )
+                    
+                    {/* 우측 유틸 버튼 (공유 / 다운로드) */}
+                    <div className="flex gap-2">
+                        <button onClick={handleShare} className="w-10 h-10 border border-slate-700 bg-slate-800 text-slate-400 rounded-xl flex items-center justify-center hover:bg-slate-700 hover:text-white active:scale-95 transition-all">
+                            🔗
+                        </button>
+                        <button onClick={handleDownload} className="w-10 h-10 border border-slate-700 bg-slate-800 text-slate-400 rounded-xl flex items-center justify-center hover:bg-slate-700 hover:text-white active:scale-95 transition-all">
+                            📥
+                        </button>
+                    </div>
+                  </div>
                 )}
               </motion.div>
             </div>
@@ -477,16 +547,14 @@ function ResultBar({ score, align, theme }: any) {
   );
 }
 
-// ⭐ [수정됨] 렉 없는 슬라이더 (transition 제거, touch-none 적용)
 function InteractiveBar({ score, align, color, onChange }: any) {
   const barColor = color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400';
   const rotationClass = align === 'right' ? 'rotate-180' : ''; 
   
-  // 햅틱 쓰로틀링 (너무 잦은 진동 방지)
   const lastHapticRef = useRef(0);
   const triggerHaptic = () => {
     const now = Date.now();
-    if (now - lastHapticRef.current > 50) { // 50ms 간격 제한
+    if (now - lastHapticRef.current > 50) { 
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(5); 
       }
@@ -503,17 +571,12 @@ function InteractiveBar({ score, align, color, onChange }: any) {
   return (
     <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'} relative group`}>
       <div className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        
-        {/* ⭐ transition-all 제거하여 렉(Lag) 없앰 */}
         <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} opacity-80`} />
-        
         <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none`}>
           <span className="text-white font-black text-xs drop-shadow-md tracking-wider">
             {score.toFixed(1)}
           </span>
         </div>
-        
-        {/* ⭐ touch-none: 슬라이더 드래그 시 화면 스크롤 방지 */}
         <input 
           type="range" 
           min="0" 
