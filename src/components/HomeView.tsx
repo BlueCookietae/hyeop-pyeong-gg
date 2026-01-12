@@ -19,17 +19,13 @@ const POS_ICONS: Record<string, string> = {
   'SUP': '/icons/support.png'
 };
 
-// ⭐ props로 서버에서 가져온 초기 데이터를 받습니다.
 export default function HomeView({ initialMatches, initialRosters }: { initialMatches: any[], initialRosters: any }) {
-  // 이미 데이터가 있으므로 초기값으로 설정
   const [allMatches, setAllMatches] = useState<any[]>(initialMatches);
   const [teamRosters, setTeamRosters] = useState<Record<string, string[]>>(initialRosters);
   
   const [currentTab, setCurrentTab] = useState(1);
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // ⭐ 데이터 Fetching useEffect 삭제됨 (서버에서 해줌)
 
   const getFilteredMatches = () => {
     const kstToday = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Seoul"})).toISOString().split('T')[0];
@@ -87,6 +83,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
+  const [hasParticipated, setHasParticipated] = useState(false); // ⭐ 이미 참여했는지 여부
   const [averages, setAverages] = useState<Record<string, number>>({});
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
   const [showTooltip, setShowTooltip] = useState(false);
@@ -98,7 +95,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const isHomeWin = isFinished && homeScore > awayScore;
   const isAwayWin = isFinished && awayScore > homeScore;
 
-  // ⭐ 팀별 테마 결정 (승리:red, 패배:blue, 미정:slate)
   const homeTheme = !isFinished ? 'slate' : (isHomeWin ? 'red' : 'blue');
   const awayTheme = !isFinished ? 'slate' : (isAwayWin ? 'red' : 'blue');
 
@@ -118,7 +114,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const isTomorrow = checkIsTomorrow();
 
   useEffect(() => {
-    if (isOpen) { fetchAverages(); } 
+    if (isOpen) { 
+      fetchAverages(); 
+      fetchMyRatings(); // ⭐ 열릴 때 내 참여 여부도 확인
+    } 
     else { setIsEditing(false); setShowTooltip(false); }
   }, [isOpen]);
 
@@ -143,15 +142,20 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
   const fetchMyRatings = async () => {
     const user = auth.currentUser;
-    if (!user) return;
+    if (!user) {
+        setHasParticipated(false);
+        return;
+    }
     const docId = `${user.uid}_${match.id}`;
     const snap = await getDoc(doc(db, "matchRatings", docId));
     if (snap.exists()) {
+      setHasParticipated(true); // ⭐ 참여함 체크
       const saved = snap.data().ratings;
       const parsed: Record<string, number> = {};
       Object.entries(saved).forEach(([name, val]: any) => parsed[name] = val.score);
       setMyRatings(parsed);
     } else {
+      setHasParticipated(false);
       const initial: Record<string, number> = {};
       [...homeRoster, ...awayRoster].forEach(p => initial[p] = 0);
       initial[FUN_KEY] = 0; 
@@ -166,7 +170,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const handleStartEdit = async (e: any) => {
     e.stopPropagation();
     if (!auth.currentUser) return alert("로그인이 필요한 서비스입니다.");
-    await fetchMyRatings();
+    // 이미 useEffect에서 데이터를 가져왔으므로 바로 편집 모드 진입
     setIsEditing(true);
   };
 
@@ -184,6 +188,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
       });
       alert("평점이 반영되었습니다!");
       setIsEditing(false);
+      setHasParticipated(true); // 제출 성공 시 참여 상태로 변경
       await fetchAverages(true); 
     } catch (e) { alert("제출 실패"); }
   };
@@ -279,7 +284,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                       <span className="truncate w-20">{hp.split(' ').slice(1).join(' ')}</span>
                       <span className="truncate w-20 text-right">{ap.split(' ').slice(1).join(' ')}</span>
                     </div>
-                    <motion.div layout className="flex items-center gap-3 h-8 relative">
+                    <motion.div layout className="flex items-center gap-3 h-10 relative">
                       {isEditing ? <InteractiveBar score={hScore} align="left" color="cyan" onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={homeTheme} />}
                       <div className="w-6 flex justify-center opacity-60">
                          <img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" />
@@ -324,10 +329,18 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                     </button>
                   ) : (
                     <div className="flex gap-3">
-                      <button onClick={handleStartEdit} className="flex-1 py-3 bg-gradient-to-r from-slate-800 to-slate-800 hover:from-cyan-900 hover:to-blue-900 border border-slate-700 text-white rounded-xl font-black text-[10px] uppercase shadow-lg active:scale-95 transition-all tracking-tight flex items-center justify-center gap-1">
-                         <span>🫠​</span> 내 평점 등록하기
+                      {/* ⭐ [수정됨] 글래스모피즘 & 텍스트 조건부 변경 */}
+                      <button 
+                        onClick={handleStartEdit} 
+                        className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
+                      >
+                         <span>{hasParticipated ? '✏️' : '🫠'}</span> 
+                         <span>{hasParticipated ? '평점 수정하기' : '내 평점 등록하기'}</span>
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} className="flex-1 py-3 bg-slate-800 text-slate-400 hover:text-white border border-slate-700/50 rounded-xl font-bold text-[10px] uppercase transition-all flex items-center justify-center gap-1">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} 
+                        className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"
+                      >
                         <span>💬</span> 한줄평 보기
                       </button>
                     </div>
@@ -384,17 +397,51 @@ function ResultBar({ score, align, theme }: any) {
   );
 }
 
+// ⭐ [수정됨] 인터랙티브 바 개선 (햅틱, 디자인)
 function InteractiveBar({ score, align, color, onChange }: any) {
   const barColor = color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400';
-  const textColor = color === 'cyan' ? 'text-cyan-300' : 'text-red-300';
   const rotationClass = align === 'right' ? 'rotate-180' : ''; 
+  
+  // 햅틱 피드백 함수 (아이폰 스타일의 짧은 진동)
+  const triggerHaptic = () => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(5); // 5ms의 아주 짧은 진동
+    }
+  };
+
+  const handleChange = (e: any) => {
+    const newVal = parseFloat(e.target.value);
+    onChange(newVal);
+    triggerHaptic(); // 값 변경 시 진동
+  };
+
   return (
     <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'} relative group`}>
-      <div className={`flex-1 h-4 bg-slate-800 rounded-full overflow-hidden relative flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} transition-all duration-75`} />
-        <input type="range" min="0" max="10" step="0.1" value={score} onChange={(e) => onChange(parseFloat(e.target.value))} className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-10 ${rotationClass}`} />
+      {/* 바 높이를 h-8 (32px)로 키워서 터치 영역 확보 */}
+      <div className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
+        
+        {/* 실제 채워지는 게이지 */}
+        <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} opacity-80 transition-all duration-75`} />
+        
+        {/* ⭐ 점수를 바 중앙에 표시 (absolute center) */}
+        <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none`}>
+          <span className="text-white font-black text-xs drop-shadow-md tracking-wider">
+            {score.toFixed(1)}
+          </span>
+        </div>
+
+        {/* 투명한 Range Input (터치 영역) */}
+        <input 
+          type="range" 
+          min="0" 
+          max="10" 
+          step="0.1" 
+          value={score} 
+          onChange={handleChange} 
+          className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20 ${rotationClass}`} 
+        />
       </div>
-      <div className={`w-8 text-right font-black italic ${textColor} text-xs group-hover:scale-110 transition-transform`}>{score.toFixed(1)}</div>
+      {/* 기존에 있던 옆구리 숫자 div는 삭제했습니다! (공간 확보) */}
     </div>
   );
 }
