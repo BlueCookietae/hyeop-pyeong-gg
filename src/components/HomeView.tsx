@@ -1,17 +1,17 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation'; 
 import LoginButton from '@/components/LoginButton';
 import { db, auth } from '@/lib/firebase';
-import { collection, doc, getDoc, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { collection, query, getDocs, where, doc, getDoc, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'; 
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
-import * as htmlToImage from 'html-to-image';
+import * as htmlToImage from 'html-to-image'; 
 
 const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
-const FUN_KEY = 'match_fun_score';
+const FUN_KEY = 'match_fun_score'; 
 
 const POS_ICONS: Record<string, string> = {
   'TOP': '/icons/top.png',
@@ -21,7 +21,7 @@ const POS_ICONS: Record<string, string> = {
   'SUP': '/icons/support.png'
 };
 
-// 이미지 관련 유틸리티 함수들
+// --- 이미지 유틸리티 ---
 const getDisplayImgUrl = (url: string) => {
   if (!url) return '';
   if (url.startsWith('//')) return `https:${url}`;
@@ -29,10 +29,15 @@ const getDisplayImgUrl = (url: string) => {
   return url;
 };
 
+const getProxyImgUrl = (url: string) => {
+  const cleanUrl = getDisplayImgUrl(url).replace(/^https?:\/\//, '');
+  return `https://wsrv.nl/?url=${cleanUrl}&output=png`;
+};
+
+// ⭐ 이미지 다운로드 문제 해결을 위한 Base64 변환 함수 추가
 const convertImgToBase64 = async (url: string) => {
   try {
-    const cleanUrl = url.replace(/^https?:\/\//, '');
-    const proxyUrl = `https://wsrv.nl/?url=${cleanUrl}&output=png`;
+    const proxyUrl = getProxyImgUrl(url);
     const response = await fetch(proxyUrl);
     const blob = await response.blob();
     return new Promise((resolve) => {
@@ -77,6 +82,7 @@ const getRosterForMatch = (teamName: string, dateStr: string, rosters: Record<st
   return POSITIONS.map(p => `${teamName} ${p}`);
 };
 
+// --- 메인 컴포넌트 ---
 export default function HomeView({ initialMatches, initialRosters }: { initialMatches: any[], initialRosters: any }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -147,16 +153,10 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     const touchEndY = e.changedTouches[0].clientY;
     const distanceX = touchStartX.current - touchEndX;
     const distanceY = touchStartY.current - touchEndY;
-    
     if (Math.abs(distanceY) > 30) return;
-    
     const minSwipeDistance = 80; 
-    if (distanceX > minSwipeDistance) { 
-        if (currentTab < 2) changeTab(currentTab + 1); 
-    }
-    else if (distanceX < -minSwipeDistance) { 
-        if (currentTab > 0) changeTab(currentTab - 1); 
-    }
+    if (distanceX > minSwipeDistance) { if (currentTab < 2) changeTab(currentTab + 1); }
+    else if (distanceX < -minSwipeDistance) { if (currentTab > 0) changeTab(currentTab - 1); }
   };
 
   const getFilteredMatches = () => {
@@ -297,8 +297,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     } else {
       setHasParticipated(false);
       const initial: Record<string, number> = {};
-      [...homeRoster, ...awayRoster].forEach(p => initial[p] = 0);
-      initial[FUN_KEY] = 0; 
+      [...homeRoster, ...awayRoster, FUN_KEY].forEach(p => initial[p] = 0);
       setMyRatings(initial);
     }
   };
@@ -325,83 +324,76 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     const user = auth.currentUser;
     if (!user) return;
 
-    const validKeys = new Set([...homeRoster, ...awayRoster, FUN_KEY]);
-    const cleanMyRatings: Record<string, number> = {};
-    Object.keys(myRatings).forEach(key => {
-        if (validKeys.has(key)) {
-            cleanMyRatings[key] = myRatings[key];
-        }
-    });
-
     try {
       let finalStats: any = {};
       await runTransaction(db, async (transaction) => {
         const ratingDocRef = doc(db, "matchRatings", `${user.uid}_${match.id}`);
         const matchDocRef = doc(db, "matches", match.id);
+
         const ratingDoc = await transaction.get(ratingDocRef);
         const matchDoc = await transaction.get(matchDocRef);
-        if (!matchDoc.exists()) throw "Match does not exist!";
+
+        if (!matchDoc.exists()) throw new Error("Match not found");
+
         const currentDbStats = matchDoc.data().stats || {};
         const newStats = JSON.parse(JSON.stringify(currentDbStats)); 
         const oldRatings = ratingDoc.exists() ? ratingDoc.data().ratings : {};
+
         const submitData: Record<string, any> = {};
-        Object.entries(cleanMyRatings).forEach(([name, score]) => { submitData[name] = { score, comment: "" }; });
-        Object.keys(cleanMyRatings).forEach(key => {
-            const newScore = Number(cleanMyRatings[key]);
-            const oldScoreData = oldRatings[key]; 
-            const oldScore = oldScoreData ? Number(oldScoreData.score) : undefined;
-            if (!newStats[key]) newStats[key] = { sum: 0, count: 0 };
-            if (newStats[key].sum <= 0.1) { newStats[key].sum = 0; newStats[key].count = 0; }
-            const isFreshStart = newStats[key].count === 0;
-            if (oldScore !== undefined && !isFreshStart) newStats[key].sum = newStats[key].sum - oldScore + newScore;
-            else { newStats[key].sum += newScore; newStats[key].count += 1; }
-            if (newStats[key].sum < 0) newStats[key].sum = 0;
+        Object.entries(myRatings).forEach(([name, score]) => { 
+            submitData[name] = { score, comment: "" }; 
+            const oldScore = oldRatings[name]?.score;
+            if (!newStats[name]) newStats[name] = { sum: 0, count: 0 };
+            if (oldScore !== undefined) {
+                newStats[name].sum = Math.max(0, newStats[name].sum - oldScore + score);
+            } else {
+                newStats[name].sum += score;
+                newStats[name].count += 1;
+            }
         });
+
         finalStats = newStats;
-        transaction.set(ratingDocRef, { userId: user.uid, matchId: match.id, matchInfo: `${match.home.name} vs ${match.away.name}`, ratings: submitData, createdAt: serverTimestamp(), });
+        transaction.set(ratingDocRef, { userId: user.uid, matchId: match.id, ratings: submitData, createdAt: serverTimestamp() });
         transaction.set(matchDocRef, { stats: newStats }, { merge: true });
       });
+
       alert("평점이 반영되었습니다!");
-      setIsEditing(false);
-      setHasParticipated(true);
-      setCurrentStats(finalStats);
-    } catch (e) { console.error("Transaction failed: ", e); alert("제출 실패 (잠시 후 다시 시도해주세요)"); }
+      setIsEditing(false); setHasParticipated(true); setCurrentStats(finalStats);
+    } catch (e: any) { 
+        // ⭐ 제출 실패 시 상세 에러 코드를 팝업으로 띄우도록 수정
+        console.error("Submit Error:", e);
+        alert(`제출 실패\n에러코드: ${e.code || 'unknown'}\n메시지: ${e.message?.substring(0, 50)}`);
+    }
   };
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
-  // ⭐ 수정된 다운로드 함수 (Base64 변환 적용)
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
-    cardRef.current.classList.add('download-mode');
-    const imgElements = cardRef.current.querySelectorAll('img');
+    cardRef.current.classList.add('download-mode'); 
+    const imgs = cardRef.current.querySelectorAll('img');
     const originalSrcs: string[] = [];
-    const tasks = Array.from(imgElements).map(async (img, index) => {
-      const src = img.src;
-      originalSrcs[index] = src;
-      if (src.startsWith('data:') || src.includes('localhost') || src.includes(window.location.host)) return;
-      const base64 = await convertImgToBase64(src);
+    const tasks = Array.from(imgs).map(async (img, i) => {
+      originalSrcs[i] = img.src;
+      if (img.src.startsWith('data:') || img.src.includes('localhost')) return;
+      const base64 = await convertImgToBase64(img.src);
       if (base64) { img.src = base64 as string; img.crossOrigin = 'anonymous'; }
     });
     try {
       await Promise.all(tasks);
       await new Promise(r => setTimeout(r, 100));
-      const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 2, skipAutoScale: true, cacheBust: true });
+      const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 2, cacheBust: true });
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
           const file = new File([blob], `rating.png`, { type: 'image/png' });
-          if (navigator.canShare({ files: [file] })) {
-              try { await navigator.share({ files: [file], title: '협곡평점.GG', text: `${match.home.name} vs ${match.away.name} 경기 평점입니다!`, }); return; } catch (shareError) { console.log('Share cancelled', shareError); }
-          }
+          await navigator.share({ files: [file], title: '협곡평점.GG' });
+      } else {
+          const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click();
       }
-      const link = document.createElement('a');
-      link.download = `협곡평점_${match.home.name}_vs_${match.away.name}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch(err) { console.error("Image generation failed:", err); alert("이미지 저장에 실패했습니다."); } finally {
-        imgElements.forEach((img, index) => { if (originalSrcs[index]) img.src = originalSrcs[index]; img.removeAttribute('crossOrigin'); });
-        cardRef.current.classList.remove('download-mode');
+    } catch(err) { alert("이미지 저장 실패"); } finally {
+      imgs.forEach((img, i) => { if (originalSrcs[i]) img.src = originalSrcs[i]; });
+      cardRef.current.classList.remove('download-mode');
     }
   };
 
@@ -415,11 +407,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
         onClick={handleCardClick} 
         className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}
     >
-      <style jsx global>{`
-        .download-mode .hide-on-download { display: none !important; }
-        .download-mode .team-name-text { display: none !important; }
-        .download-mode .team-logo-img { margin-bottom: 5px; } 
-      `}</style>
+      <style jsx global>{`.download-mode .hide-on-download { display: none !important; } .download-mode .team-name-text { display: none !important; } .download-mode .team-logo-img { margin-bottom: 5px; }`}</style>
 
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
         <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg ${isEditing ? 'bg-indigo-900 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
@@ -462,27 +450,27 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
       <AnimatePresence>
         {isOpen && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
-            {/* ⭐ 레이아웃 간격 조정: p-5 -> p-4, space-y-4 -> space-y-2 */}
+            {/* ⭐ 레이아웃 간격 조정 (자석처럼 밀착) */}
             <div className="p-4 space-y-2">
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx];
                 const ap = awayRoster[idx];
                 const hScore = isEditing ? (myRatings[hp] ?? 0) : (averages[hp] ?? 0);
                 const aScore = isEditing ? (myRatings[ap] ?? 0) : (averages[ap] ?? 0);
+                
                 const hName = formatPlayerName(hp, match.home.name);
                 const aName = formatPlayerName(ap, match.away.name);
 
                 return (
-                  <div key={pos} className="flex flex-col gap-1">
-                    {/* ⭐ 간격 조정: mb-1 제거 (바와 딱 붙게) */}
-                    <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                      <span className="truncate w-20">{hName}</span>
-                      <span className="truncate w-20 text-right">{aName}</span>
+                  <div key={pos} className="flex flex-col gap-0">
+                    {/* ⭐ mb-0으로 설정하여 바와 딱 붙게 수정 */}
+                    <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0">
+                      <span className="truncate w-24">{hName}</span>
+                      <span className="truncate w-24 text-right">{aName}</span>
                     </div>
                     <motion.div layout className="flex items-center gap-3 h-10 relative">
-                      {/* ⭐ 새로 만든 InteractiveBar 사용 */}
                       {isEditing ? <InteractiveBar score={hScore} align="left" color="cyan" onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={homeTheme} />}
-                      <div className="w-6 flex justify-center opacity-60"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
+                      <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
                       {isEditing ? <InteractiveBar score={aScore} align="right" color="red" onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={awayTheme} />}
                     </motion.div>
                   </div>
@@ -520,7 +508,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
                         <button onClick={handleStartEdit} className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"><span>{hasParticipated ? '✏️' : '🫠'}</span><span>{hasParticipated ? '평점 수정' : '내 평점 등록'}</span></button>
                         <button onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"><span>💬</span> 리뷰</button>
                     </div>
-                    <button onClick={handleDownload} className="w-5 h-5 flex items-center justify-center active:scale-95 transition-all"><img src="/icons/download.png" className="w-full h-full object-contain opacity-80 hover:opacity-100" alt="download" /></button>
+                    <button onClick={handleDownload} className="w-10 flex items-center justify-center opacity-70 active:scale-90 transition-all"><img src="/icons/download.png" className="w-5 h-5 object-contain" /></button>
                   </div>
                 )}
               </motion.div>
@@ -533,31 +521,54 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   );
 }
 
-function DopamineRating({ score, isEditing, onChange }: any) {
-  const starScore = score / 2; 
+// --- 하위 UI 컴포넌트 (InteractiveBar 등) ---
+
+function InteractiveBar({ score, align, color, onChange }: any) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
   const lastHapticRef = useRef(0);
-  const triggerHaptic = () => {
+
+  const triggerHaptic = useCallback(() => {
     const now = Date.now();
-    if (now - lastHapticRef.current > 50) {
+    if (now - lastHapticRef.current > 50) { 
       if (typeof navigator !== 'undefined' && navigator.vibrate) { navigator.vibrate(5); }
       lastHapticRef.current = now;
     }
+  }, []);
+
+  const update = useCallback((clientX: number) => {
+    if (!barRef.current) return;
+    const rect = barRef.current.getBoundingClientRect();
+    let p = (clientX - rect.left) / rect.width;
+    if (align === 'right') p = 1 - p;
+    const newS = Math.round(Math.max(0, Math.min(1, p)) * 100) / 10;
+    if (newS !== score) {
+      onChange(newS);
+      triggerHaptic();
+    }
+  }, [align, onChange, score, triggerHaptic]);
+
+  const onStart = (e: any) => {
+    isDragging.current = true;
+    const x = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
+    update(x);
   };
-  const handleClick = (val: number) => {
-    if (isEditing) { onChange(val); triggerHaptic(); }
+  const onMove = (e: any) => {
+    if (!isDragging.current) return;
+    const x = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
+    update(x);
   };
+  const onEnd = () => { isDragging.current = false; };
+
   return (
-    <div className="flex flex-col items-center">
-      <div className="flex gap-1.5">
-        {[1, 2, 3, 4, 5].map((idx) => (
-          <div key={idx} className="relative w-6 h-6 cursor-pointer group">
-            <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-            {starScore >= idx && <svg viewBox="0 0 24 24" className="absolute top-0 left-0 w-full h-full text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>}
-            {starScore >= idx - 0.5 && starScore < idx && <div className="absolute top-0 left-0 w-1/2 h-full overflow-hidden"><svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div>}
-            {isEditing && <div className="absolute inset-0 flex"><div className="w-1/2 h-full z-10" onClick={() => handleClick((idx - 1) * 2 + 1)}></div><div className="w-1/2 h-full z-10" onClick={() => handleClick(idx * 2)}></div></div>}
-          </div>
-        ))}
-      </div>
+    <div 
+      ref={barRef}
+      onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
+      onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
+      className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`}
+    >
+      <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400'} opacity-80 pointer-events-none`} />
+      <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none drop-shadow-md">{score.toFixed(1)}</span>
     </div>
   );
 }
@@ -581,78 +592,29 @@ function ResultBar({ score, align, theme }: any) {
   );
 }
 
-// ⭐ 완전히 새로 구현한 InteractiveBar (터치/마우스 이벤트 직접 처리)
-function InteractiveBar({ score, align, color, onChange }: any) {
-  const barColor = color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400';
-  const barRef = useRef<HTMLDivElement>(null);
+function DopamineRating({ score, isEditing, onChange }: any) {
+  const starScore = score / 2; 
   const lastHapticRef = useRef(0);
-  const isDragging = useRef(false);
-
-  const triggerHaptic = useCallback(() => {
+  const triggerHaptic = () => {
     const now = Date.now();
-    if (now - lastHapticRef.current > 50) { 
+    if (now - lastHapticRef.current > 50) {
       if (typeof navigator !== 'undefined' && navigator.vibrate) { navigator.vibrate(5); }
       lastHapticRef.current = now;
     }
-  }, []);
-
-  const calculateScore = useCallback((clientX: number) => {
-    if (!barRef.current) return;
-    const rect = barRef.current.getBoundingClientRect();
-    let percentage = (clientX - rect.left) / rect.width;
-    if (align === 'right') percentage = 1 - percentage;
-    percentage = Math.max(0, Math.min(1, percentage));
-    const newScore = Math.round(percentage * 100) / 10;
-    if (newScore !== score) {
-      onChange(newScore);
-      triggerHaptic();
-    }
-  }, [align, onChange, score, triggerHaptic]);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    isDragging.current = true;
-    calculateScore(e.touches[0].clientX);
   };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (isDragging.current) {
-      calculateScore(e.touches[0].clientX);
-    }
+  const handleClick = (val: number) => {
+    if (isEditing) { onChange(val); triggerHaptic(); }
   };
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    isDragging.current = true;
-    calculateScore(e.clientX);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  };
-
-  const handleMouseMove = useCallback((e: MouseEvent) => {
-    if (isDragging.current) {
-      calculateScore(e.clientX);
-    }
-  }, [calculateScore]);
-
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
-  }, [handleMouseMove]);
-
   return (
-    <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'} relative group select-none touch-none`}>
-      <div 
-        ref={barRef}
-        className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'} cursor-ew-resize`}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={() => isDragging.current = false}
-        onMouseDown={handleMouseDown}
-      >
-        <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${barColor} opacity-80 pointer-events-none`} />
-        <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none`}>
-          <span className="text-white font-black text-xs drop-shadow-md tracking-wider leading-none">{score.toFixed(1)}</span>
-        </div>
+    <div className="flex flex-col items-center">
+      <div className="flex gap-1.5">
+        {[1, 2, 3, 4, 5].map((idx) => (
+          <div key={idx} className="relative w-6 h-6 cursor-pointer group" onClick={() => handleClick(idx * 2)}>
+            <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+            {starScore >= idx && <svg viewBox="0 0 24 24" className="absolute top-0 left-0 w-full h-full text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>}
+            {starScore >= idx - 0.5 && starScore < idx && <div className="absolute top-0 left-0 w-1/2 h-full overflow-hidden"><svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div>}
+          </div>
+        ))}
       </div>
     </div>
   );
