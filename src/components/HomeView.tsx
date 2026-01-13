@@ -1,17 +1,17 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation'; 
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import LoginButton from '@/components/LoginButton';
 import { db, auth } from '@/lib/firebase';
-import { collection, query, getDocs, where, doc, getDoc, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'; 
+import { collection, doc, getDoc, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
-import * as htmlToImage from 'html-to-image'; 
+import * as htmlToImage from 'html-to-image';
 
 const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
-const FUN_KEY = 'match_fun_score'; 
+const FUN_KEY = 'match_fun_score';
 
 const POS_ICONS: Record<string, string> = {
   'TOP': '/icons/top.png',
@@ -21,6 +21,7 @@ const POS_ICONS: Record<string, string> = {
   'SUP': '/icons/support.png'
 };
 
+// 이미지 관련 유틸리티 함수들
 const getDisplayImgUrl = (url: string) => {
   if (!url) return '';
   if (url.startsWith('//')) return `https:${url}`;
@@ -28,9 +29,21 @@ const getDisplayImgUrl = (url: string) => {
   return url;
 };
 
-const getProxyImgUrl = (url: string) => {
-  const cleanUrl = getDisplayImgUrl(url).replace(/^https?:\/\//, '');
-  return `https://wsrv.nl/?url=${cleanUrl}&output=png`;
+const convertImgToBase64 = async (url: string) => {
+  try {
+    const cleanUrl = url.replace(/^https?:\/\//, '');
+    const proxyUrl = `https://wsrv.nl/?url=${cleanUrl}&output=png`;
+    const response = await fetch(proxyUrl);
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error("Image conversion failed:", error);
+    return null;
+  }
 };
 
 const dataURItoBlob = (dataURI: string) => {
@@ -77,66 +90,50 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
 
-  // ⭐ 1. 탭 변경 통합 함수 (클릭/스와이프 공용)
-  // 탭을 바꿀 때: 스크롤 위로 + 카드 닫기 + URL 초기화
   const changeTab = (newTab: number) => {
     if (newTab < 0 || newTab > 2) return;
     setCurrentTab(newTab);
     setExpandedId(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' }); // 스크롤 최상단
-    router.replace('/', { scroll: false }); // URL 청소 (새로고침 없음)
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    router.replace('/', { scroll: false });
   };
 
-  // ⭐ 2. 카드 토글 통합 함수
-  // 카드를 열/닫을 때: URL 업데이트 (새로고침 없음)
   const toggleCard = (matchId: string, isOpenNow: boolean) => {
-    // isOpenNow: 현재 열려있는지 여부 (true면 닫아야 하고, false면 열어야 함)
     if (isOpenNow) {
-        // 닫기
         setExpandedId(null);
-        setIsScrolled(true); // 닫아도 스크롤 유지
+        setIsScrolled(true);
         router.replace('/', { scroll: false }); 
     } else {
-        // 열기
         setExpandedId(matchId);
         router.replace(`/?expanded=${matchId}`, { scroll: false });
     }
   };
 
-  // ⭐ 3. URL 파라미터 감지 (초기 진입 & 뒤로가기 대응)
   useEffect(() => {
     const targetId = searchParams.get('expanded');
-    
     if (targetId) {
-        // URL에 ID가 있으면 -> 해당 탭으로 이동 & 카드 열기
         if (allMatches.length > 0) {
             const targetMatch = allMatches.find(m => m.id === targetId);
             if (targetMatch) {
                 const kstToday = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Seoul"})).toISOString().split('T')[0];
                 const matchDate = targetMatch.date.split(' ')[0];
-
-                // 탭 결정
                 if (matchDate < kstToday) setCurrentTab(0);
                 else if (matchDate === kstToday) setCurrentTab(1);
                 else setCurrentTab(2);
-                
                 setExpandedId(targetId);
             }
         }
     } else {
-        // URL에 ID가 없으면 -> 카드 닫기 (뒤로가기 눌렀을 때 닫히는 효과)
         setExpandedId(null);
     }
   }, [searchParams, allMatches]);
 
-  // 스크롤 감지
   useEffect(() => {
     const handleScroll = () => { setIsScrolled(window.scrollY > 0); };
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // 스와이프 로직
   const touchStartX = useRef(0);
   const touchStartY = useRef(0); 
 
@@ -151,15 +148,13 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     const distanceX = touchStartX.current - touchEndX;
     const distanceY = touchStartY.current - touchEndY;
     
-    if (Math.abs(distanceY) > 30) return; // 위아래 스크롤이면 무시
+    if (Math.abs(distanceY) > 30) return;
     
     const minSwipeDistance = 80; 
     if (distanceX > minSwipeDistance) { 
-        // 오른쪽으로 스와이프 (다음 탭)
         if (currentTab < 2) changeTab(currentTab + 1); 
     }
     else if (distanceX < -minSwipeDistance) { 
-        // 왼쪽으로 스와이프 (이전 탭)
         if (currentTab > 0) changeTab(currentTab - 1); 
     }
   };
@@ -187,7 +182,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
             </div>
           </header>
           <div className={`flex items-center justify-between px-4 transition-all duration-300 ${isScrolled ? 'pb-2' : 'pb-2'}`}>
-            {/* ⭐ changeTab 함수 사용 */}
             <button onClick={() => changeTab(Math.max(0, currentTab - 1))} disabled={currentTab === 0} className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${currentTab === 0 ? 'text-slate-800' : 'text-cyan-400 hover:bg-slate-800'}`}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
             </button>
@@ -219,7 +213,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                   homeRoster={getRosterForMatch(match.home.name, match.date, teamRosters)}
                   awayRoster={getRosterForMatch(match.away.name, match.date, teamRosters)}
                   isOpen={expandedId === match.id}
-                  // ⭐ toggleCard 함수 연결
                   onToggle={(isOpenNow: boolean) => toggleCard(match.id, isOpenNow)}
                 />
               ))
@@ -232,11 +225,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   );
 }
 
-// ... MatchCard 및 하위 컴포넌트는 그대로 두시면 됩니다 ...
-// (기존 코드에 있던 MatchCard, DopamineRating 등은 변경사항 없습니다)
-// 다만, MatchCard 코드를 포함해야 한다면 아래에 이어서 붙여넣어주세요.
-// 편의상 위쪽 HomeView만 교체해도 작동합니다.
-
 function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const router = useRouter();
   const cardRef = useRef<HTMLDivElement>(null);
@@ -244,7 +232,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const [hasParticipated, setHasParticipated] = useState(false); 
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
   const [showTooltip, setShowTooltip] = useState(false);
-  
   const [currentStats, setCurrentStats] = useState(match.stats || {});
 
   useEffect(() => {
@@ -348,117 +335,72 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
     try {
       let finalStats: any = {};
-
       await runTransaction(db, async (transaction) => {
         const ratingDocRef = doc(db, "matchRatings", `${user.uid}_${match.id}`);
         const matchDocRef = doc(db, "matches", match.id);
-
         const ratingDoc = await transaction.get(ratingDocRef);
         const matchDoc = await transaction.get(matchDocRef);
-
         if (!matchDoc.exists()) throw "Match does not exist!";
-
         const currentDbStats = matchDoc.data().stats || {};
         const newStats = JSON.parse(JSON.stringify(currentDbStats)); 
-        
         const oldRatings = ratingDoc.exists() ? ratingDoc.data().ratings : {};
-
         const submitData: Record<string, any> = {};
-        Object.entries(cleanMyRatings).forEach(([name, score]) => { 
-            submitData[name] = { score, comment: "" }; 
-        });
-
+        Object.entries(cleanMyRatings).forEach(([name, score]) => { submitData[name] = { score, comment: "" }; });
         Object.keys(cleanMyRatings).forEach(key => {
             const newScore = Number(cleanMyRatings[key]);
             const oldScoreData = oldRatings[key]; 
             const oldScore = oldScoreData ? Number(oldScoreData.score) : undefined;
-
-            if (!newStats[key]) {
-                newStats[key] = { sum: 0, count: 0 };
-            }
-
-            if (newStats[key].sum <= 0.1) {
-                newStats[key].sum = 0;
-                newStats[key].count = 0;
-            }
-
+            if (!newStats[key]) newStats[key] = { sum: 0, count: 0 };
+            if (newStats[key].sum <= 0.1) { newStats[key].sum = 0; newStats[key].count = 0; }
             const isFreshStart = newStats[key].count === 0;
-
-            if (oldScore !== undefined && !isFreshStart) {
-                newStats[key].sum = newStats[key].sum - oldScore + newScore;
-            } else {
-                newStats[key].sum += newScore;
-                newStats[key].count += 1;
-            }
-            
+            if (oldScore !== undefined && !isFreshStart) newStats[key].sum = newStats[key].sum - oldScore + newScore;
+            else { newStats[key].sum += newScore; newStats[key].count += 1; }
             if (newStats[key].sum < 0) newStats[key].sum = 0;
         });
-
         finalStats = newStats;
-
-        transaction.set(ratingDocRef, {
-            userId: user.uid, 
-            matchId: match.id, 
-            matchInfo: `${match.home.name} vs ${match.away.name}`, 
-            ratings: submitData, 
-            createdAt: serverTimestamp(),
-        });
-
+        transaction.set(ratingDocRef, { userId: user.uid, matchId: match.id, matchInfo: `${match.home.name} vs ${match.away.name}`, ratings: submitData, createdAt: serverTimestamp(), });
         transaction.set(matchDocRef, { stats: newStats }, { merge: true });
       });
-
       alert("평점이 반영되었습니다!");
       setIsEditing(false);
       setHasParticipated(true);
-      
       setCurrentStats(finalStats);
-
-    } catch (e) { 
-        console.error("Transaction failed: ", e); 
-        alert("제출 실패 (잠시 후 다시 시도해주세요)"); 
-    }
+    } catch (e) { console.error("Transaction failed: ", e); alert("제출 실패 (잠시 후 다시 시도해주세요)"); }
   };
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
+  // ⭐ 수정된 다운로드 함수 (Base64 변환 적용)
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
-    cardRef.current.classList.add('download-mode'); 
-    await document.fonts.ready; 
-    const images = cardRef.current.getElementsByTagName('img');
+    cardRef.current.classList.add('download-mode');
+    const imgElements = cardRef.current.querySelectorAll('img');
     const originalSrcs: string[] = [];
-    const promises: Promise<void>[] = [];
-    for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        originalSrcs[i] = img.src; 
-        const src = img.src;
-        if (src && !src.startsWith('data:') && !src.includes('localhost') && !src.includes(window.location.host)) {
-             const proxyUrl = getProxyImgUrl(src);
-             img.crossOrigin = "anonymous"; 
-             img.src = proxyUrl; 
-             promises.push(new Promise((resolve) => {
-                 if (img.complete) resolve();
-                 else { img.onload = () => resolve(); img.onerror = () => resolve(); }
-             }));
-        }
-    }
-    await Promise.all(promises);
+    const tasks = Array.from(imgElements).map(async (img, index) => {
+      const src = img.src;
+      originalSrcs[index] = src;
+      if (src.startsWith('data:') || src.includes('localhost') || src.includes(window.location.host)) return;
+      const base64 = await convertImgToBase64(src);
+      if (base64) { img.src = base64 as string; img.crossOrigin = 'anonymous'; }
+    });
     try {
-        const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 2, skipAutoScale: true });
-        if (navigator.share) {
-            const blob = dataURItoBlob(dataUrl);
-            const file = new File([blob], `rating.png`, { type: 'image/png' });
-            if (navigator.canShare({ files: [file] })) {
-                try { await navigator.share({ files: [file], title: '협곡평점.GG', text: '내 경기 평점을 확인해보세요!', }); return; } catch (shareError) { console.log('Share cancelled', shareError); }
-            }
-        }
-        const link = document.createElement('a');
-        link.download = `협곡평점_${match.home.name}_vs_${match.away.name}.png`;
-        link.href = dataUrl;
-        link.click();
+      await Promise.all(tasks);
+      await new Promise(r => setTimeout(r, 100));
+      const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 2, skipAutoScale: true, cacheBust: true });
+      if (navigator.share) {
+          const blob = dataURItoBlob(dataUrl);
+          const file = new File([blob], `rating.png`, { type: 'image/png' });
+          if (navigator.canShare({ files: [file] })) {
+              try { await navigator.share({ files: [file], title: '협곡평점.GG', text: `${match.home.name} vs ${match.away.name} 경기 평점입니다!`, }); return; } catch (shareError) { console.log('Share cancelled', shareError); }
+          }
+      }
+      const link = document.createElement('a');
+      link.download = `협곡평점_${match.home.name}_vs_${match.away.name}.png`;
+      link.href = dataUrl;
+      link.click();
     } catch(err) { console.error("Image generation failed:", err); alert("이미지 저장에 실패했습니다."); } finally {
-        for (let i = 0; i < images.length; i++) { images[i].src = originalSrcs[i]; images[i].removeAttribute('crossOrigin'); }
+        imgElements.forEach((img, index) => { if (originalSrcs[index]) img.src = originalSrcs[index]; img.removeAttribute('crossOrigin'); });
         cardRef.current.classList.remove('download-mode');
     }
   };
@@ -520,23 +462,25 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
       <AnimatePresence>
         {isOpen && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
-            <div className="p-5 space-y-4">
+            {/* ⭐ 레이아웃 간격 조정: p-5 -> p-4, space-y-4 -> space-y-2 */}
+            <div className="p-4 space-y-2">
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx];
                 const ap = awayRoster[idx];
                 const hScore = isEditing ? (myRatings[hp] ?? 0) : (averages[hp] ?? 0);
                 const aScore = isEditing ? (myRatings[ap] ?? 0) : (averages[ap] ?? 0);
-                
                 const hName = formatPlayerName(hp, match.home.name);
                 const aName = formatPlayerName(ap, match.away.name);
 
                 return (
                   <div key={pos} className="flex flex-col gap-1">
+                    {/* ⭐ 간격 조정: mb-1 제거 (바와 딱 붙게) */}
                     <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                       <span className="truncate w-20">{hName}</span>
                       <span className="truncate w-20 text-right">{aName}</span>
                     </div>
                     <motion.div layout className="flex items-center gap-3 h-10 relative">
+                      {/* ⭐ 새로 만든 InteractiveBar 사용 */}
                       {isEditing ? <InteractiveBar score={hScore} align="left" color="cyan" onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={homeTheme} />}
                       <div className="w-6 flex justify-center opacity-60"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
                       {isEditing ? <InteractiveBar score={aScore} align="right" color="red" onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={awayTheme} />}
@@ -591,6 +535,17 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
 function DopamineRating({ score, isEditing, onChange }: any) {
   const starScore = score / 2; 
+  const lastHapticRef = useRef(0);
+  const triggerHaptic = () => {
+    const now = Date.now();
+    if (now - lastHapticRef.current > 50) {
+      if (typeof navigator !== 'undefined' && navigator.vibrate) { navigator.vibrate(5); }
+      lastHapticRef.current = now;
+    }
+  };
+  const handleClick = (val: number) => {
+    if (isEditing) { onChange(val); triggerHaptic(); }
+  };
   return (
     <div className="flex flex-col items-center">
       <div className="flex gap-1.5">
@@ -599,7 +554,7 @@ function DopamineRating({ score, isEditing, onChange }: any) {
             <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
             {starScore >= idx && <svg viewBox="0 0 24 24" className="absolute top-0 left-0 w-full h-full text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>}
             {starScore >= idx - 0.5 && starScore < idx && <div className="absolute top-0 left-0 w-1/2 h-full overflow-hidden"><svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div>}
-            {isEditing && <div className="absolute inset-0 flex"><div className="w-1/2 h-full z-10" onClick={() => onChange((idx - 1) * 2 + 1)}></div><div className="w-1/2 h-full z-10" onClick={() => onChange(idx * 2)}></div></div>}
+            {isEditing && <div className="absolute inset-0 flex"><div className="w-1/2 h-full z-10" onClick={() => handleClick((idx - 1) * 2 + 1)}></div><div className="w-1/2 h-full z-10" onClick={() => handleClick(idx * 2)}></div></div>}
           </div>
         ))}
       </div>
@@ -626,30 +581,78 @@ function ResultBar({ score, align, theme }: any) {
   );
 }
 
+// ⭐ 완전히 새로 구현한 InteractiveBar (터치/마우스 이벤트 직접 처리)
 function InteractiveBar({ score, align, color, onChange }: any) {
   const barColor = color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400';
-  const rotationClass = align === 'right' ? 'rotate-180' : ''; 
+  const barRef = useRef<HTMLDivElement>(null);
   const lastHapticRef = useRef(0);
-  const triggerHaptic = () => {
+  const isDragging = useRef(false);
+
+  const triggerHaptic = useCallback(() => {
     const now = Date.now();
     if (now - lastHapticRef.current > 50) { 
       if (typeof navigator !== 'undefined' && navigator.vibrate) { navigator.vibrate(5); }
       lastHapticRef.current = now;
     }
+  }, []);
+
+  const calculateScore = useCallback((clientX: number) => {
+    if (!barRef.current) return;
+    const rect = barRef.current.getBoundingClientRect();
+    let percentage = (clientX - rect.left) / rect.width;
+    if (align === 'right') percentage = 1 - percentage;
+    percentage = Math.max(0, Math.min(1, percentage));
+    const newScore = Math.round(percentage * 100) / 10;
+    if (newScore !== score) {
+      onChange(newScore);
+      triggerHaptic();
+    }
+  }, [align, onChange, score, triggerHaptic]);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    isDragging.current = true;
+    calculateScore(e.touches[0].clientX);
   };
-  const handleChange = (e: any) => {
-    const newVal = parseFloat(e.target.value);
-    onChange(newVal);
-    triggerHaptic(); 
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isDragging.current) {
+      calculateScore(e.touches[0].clientX);
+    }
   };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isDragging.current = true;
+    calculateScore(e.clientX);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (isDragging.current) {
+      calculateScore(e.clientX);
+    }
+  }, [calculateScore]);
+
+  const handleMouseUp = useCallback(() => {
+    isDragging.current = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+  }, [handleMouseMove]);
+
   return (
-    <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'} relative group`}>
-      <div className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <div style={{ width: `${score * 10}%` }} className={`h-full ${barColor} opacity-80`} />
+    <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'} relative group select-none touch-none`}>
+      <div 
+        ref={barRef}
+        className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center ${align === 'left' ? 'justify-start' : 'justify-end'} cursor-ew-resize`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={() => isDragging.current = false}
+        onMouseDown={handleMouseDown}
+      >
+        <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${barColor} opacity-80 pointer-events-none`} />
         <div className={`absolute inset-0 flex items-center justify-center z-10 pointer-events-none`}>
           <span className="text-white font-black text-xs drop-shadow-md tracking-wider leading-none">{score.toFixed(1)}</span>
         </div>
-        <input type="range" min="0" max="10" step="0.1" value={score} onChange={handleChange} className={`absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20 touch-none ${rotationClass}`} />
       </div>
     </div>
   );
