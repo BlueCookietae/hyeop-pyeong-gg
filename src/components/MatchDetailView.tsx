@@ -47,7 +47,7 @@ export default function MatchDetailView({ matchData, initialRosters, initialAvgR
      fetchMyData();
   }, [matchId]);
 
-  // ⭐ [UX 추가] 선수나 팀을 바꾸면 스크롤을 맨 위로 올려줌!
+  // ⭐ [UX] 선수나 팀을 바꾸면 스크롤을 맨 위로 올려줌
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [activePosIndex, selectedTeamSide]);
@@ -187,29 +187,34 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
   const hasRated = userRating !== undefined && userRating > 0;
 
   useEffect(() => {
-    setComments([]); 
-    setMyComment(null); 
-    setLastVisible(null); 
-    setHasMore(false);
-    setInputVal(""); 
-    
+    // ⭐ 병렬 처리 버전 최적화: 
+    // 선수를 바꿀 때 기존 댓글을 굳이 비우지 않고(깜빡임 방지), 새로운 데이터가 준비되면 한 번에 교체합니다.
     const fetchMy = async () => {
         if (!user) return;
         try {
           const snap = await getDoc(doc(db, "matchComments", `${matchId}_${playerName}_${user.uid}`));
           if (snap.exists()) setMyComment({ id: snap.id, ...snap.data() });
+          else setMyComment(null);
         } catch(e) { console.error(e); }
     };
     fetchMy();
 
+    // 서버에서 이미 가져온 데이터가 있는지 먼저 확인
     const preloaded = initialComments.filter(c => c.playerName === playerName);
+    
     if (preloaded.length > 0) {
+        // 서버 데이터를 즉시 상태에 반영 (화면 전환 속도 최적화)
         setComments(preloaded);
+        setLastVisible(null); // 초기 데이터이므로 마지막 문서 정보 초기화
+        setHasMore(preloaded.length >= PER_PAGE);
     } else {
+        // 만약 서버 데이터가 없으면 클라이언트에서 최초 1회만 호출
         fetchInitialComments();
     }
+    
+    setInputVal(""); 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchId, playerName]); 
+  }, [matchId, playerName, user]); // user 추가하여 로그인 상태 변경 대응
 
   const fetchInitialComments = async () => {
     try {

@@ -96,11 +96,15 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
 
+  // ⭐ 추가: 현재 어떤 카드라도 편집 중인지 여부
+  const [isAnyEditing, setIsAnyEditing] = useState(false);
+
   const changeTab = (newTab: number) => {
     if (newTab < 0 || newTab > 2) return;
     setCurrentTab(newTab);
     setExpandedId(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // ⭐ 탭 이동 시 즉시 최상단으로 스크롤
+    window.scrollTo({ top: 0, behavior: 'auto' });
     router.replace('/', { scroll: false });
   };
 
@@ -149,10 +153,14 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    // ⭐ 편집 모드일 때는 스와이프 차단
+    if (isAnyEditing) return;
+
     const touchEndX = e.changedTouches[0].clientX;
     const touchEndY = e.changedTouches[0].clientY;
     const distanceX = touchStartX.current - touchEndX;
     const distanceY = touchStartY.current - touchEndY;
+    
     if (Math.abs(distanceY) > 30) return;
     const minSwipeDistance = 80; 
     if (distanceX > minSwipeDistance) { if (currentTab < 2) changeTab(currentTab + 1); }
@@ -214,6 +222,8 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                   awayRoster={getRosterForMatch(match.away.name, match.date, teamRosters)}
                   isOpen={expandedId === match.id}
                   onToggle={(isOpenNow: boolean) => toggleCard(match.id, isOpenNow)}
+                  // ⭐ 편집 상태를 부모에게 전달
+                  onEditingStateChange={(editing: boolean) => setIsAnyEditing(editing)}
                 />
               ))
             )}
@@ -225,7 +235,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   );
 }
 
-function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
+function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingStateChange }: any) {
   const router = useRouter();
   const cardRef = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -233,6 +243,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
   const [showTooltip, setShowTooltip] = useState(false);
   const [currentStats, setCurrentStats] = useState(match.stats || {});
+
+  // ⭐ 편집 상태가 바뀔 때 부모 컴포넌트에 알림
+  useEffect(() => {
+    onEditingStateChange(isEditing);
+  }, [isEditing, onEditingStateChange]);
 
   useEffect(() => {
     if (match.stats) setCurrentStats(match.stats);
@@ -297,7 +312,8 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
     } else {
       setHasParticipated(false);
       const initial: Record<string, number> = {};
-      [...homeRoster, ...awayRoster, FUN_KEY].forEach(p => initial[p] = 0);
+      [...homeRoster, ...awayRoster].forEach(p => initial[p] = 0);
+      initial[FUN_KEY] = 0; 
       setMyRatings(initial);
     }
   };
@@ -360,7 +376,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
       alert("평점이 반영되었습니다!");
       setIsEditing(false); setHasParticipated(true); setCurrentStats(finalStats);
     } catch (e: any) { 
-        // ⭐ 제출 실패 시 상세 에러 코드를 팝업으로 띄우도록 수정
         console.error("Submit Error:", e);
         alert(`제출 실패\n에러코드: ${e.code || 'unknown'}\n메시지: ${e.message?.substring(0, 50)}`);
     }
@@ -450,7 +465,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
       <AnimatePresence>
         {isOpen && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
-            {/* ⭐ 레이아웃 간격 조정 (자석처럼 밀착) */}
             <div className="p-4 space-y-2">
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx];
@@ -463,14 +477,13 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle }: any) {
 
                 return (
                   <div key={pos} className="flex flex-col gap-0">
-                    {/* ⭐ mb-0으로 설정하여 바와 딱 붙게 수정 */}
                     <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0">
                       <span className="truncate w-24">{hName}</span>
                       <span className="truncate w-24 text-right">{aName}</span>
                     </div>
                     <motion.div layout className="flex items-center gap-3 h-10 relative">
                       {isEditing ? <InteractiveBar score={hScore} align="left" color="cyan" onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={homeTheme} />}
-                      <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
+                      <div className="w-6 flex justify-center opacity-60"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
                       {isEditing ? <InteractiveBar score={aScore} align="right" color="red" onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={awayTheme} />}
                     </motion.div>
                   </div>
