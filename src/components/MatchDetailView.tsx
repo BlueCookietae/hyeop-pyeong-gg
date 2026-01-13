@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth, db } from "@/lib/firebase"; 
 import { doc, getDoc, collection, query, where, getDocs, setDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, orderBy, limit, startAfter } from "firebase/firestore";
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
 
 const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
@@ -47,12 +47,10 @@ export default function MatchDetailView({ matchData, initialRosters, initialAvgR
      fetchMyData();
   }, [matchId]);
 
-  // ⭐ [UX] 선수나 팀을 바꾸면 스크롤을 맨 위로 올려줌
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [activePosIndex, selectedTeamSide]);
 
-  // --- UI 로직 ---
   const isFinished = matchData?.status === 'FINISHED';
   const isHomeWin = isFinished && (matchData?.home?.score || 0) > (matchData?.away?.score || 0);
   const isAwayWin = isFinished && (matchData?.away?.score || 0) > (matchData?.home?.score || 0);
@@ -79,8 +77,6 @@ export default function MatchDetailView({ matchData, initialRosters, initialAvgR
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
-      
-      {/* Sticky Header */}
       <div className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 shadow-2xl transition-all max-w-md mx-auto">
         <div className="flex justify-between items-center px-4 py-3">
           <button onClick={handleGoBack} className="text-2xl font-black text-slate-500 hover:text-white transition-colors">←</button>
@@ -119,7 +115,6 @@ export default function MatchDetailView({ matchData, initialRosters, initialAvgR
       </div>
 
       <div className="max-w-md mx-auto p-4 space-y-6">
-        
         {currentPlayerName && (
           <motion.div 
             key={currentPlayerName} 
@@ -180,8 +175,6 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
   const [lastVisible, setLastVisible] = useState<any>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  
-  // ⭐ 로딩 상태: 서버에서 바로 넘어온 데이터가 없으면 로딩 중으로 시작
   const [loadingComments, setLoadingComments] = useState(initialComments.length === 0);
   
   const user = auth.currentUser;
@@ -189,31 +182,40 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
 
   const hasRated = userRating !== undefined && userRating > 0;
 
+  // 닉네임 익명화 함수
+  const maskName = (name: string) => {
+    if (!name) return "****";
+    const visible = name.substring(0, 3);
+    const masked = "*".repeat(Math.max(0, name.length - 3));
+    return visible + masked;
+  };
+
   useEffect(() => {
-    // 1. 내 댓글 가져오기 (클라이언트 전용 데이터)
     const fetchMy = async () => {
         if (!user) return;
         try {
           const snap = await getDoc(doc(db, "matchComments", `${matchId}_${playerName}_${user.uid}`));
-          if (snap.exists()) setMyComment({ id: snap.id, ...snap.data() });
-          else setMyComment(null);
+          if (snap.exists()) {
+            const data = snap.id ? { id: snap.id, ...snap.data() } : null;
+            setMyComment(data);
+            if (data) setInputVal(data.content); // 수정 모드 대비
+          } else {
+            setMyComment(null);
+            setInputVal("");
+          }
         } catch(e) { console.error(e); }
     };
     fetchMy();
 
-    // 2. 스트리밍 데이터 체크 및 댓글 로드
     const loadComments = async () => {
-        // 서버에서 쏴준 스트리밍 데이터(`window.__INITIAL_COMMENTS__`)가 있는지 확인
         const streamed = (window as any).__INITIAL_COMMENTS__;
-        
         if (streamed && streamed.length > 0) {
             const filtered = streamed.filter((c: any) => c.playerName === playerName);
             setComments(filtered);
             setLoadingComments(false);
             setHasMore(filtered.length >= PER_PAGE);
         } else {
-            // 스트리밍 데이터도 없고 초기 데이터도 없으면 직접 서버에 요청
-            if (comments.length === 0) {
+            if (comments.length === 0 || playerName) {
                 setLoadingComments(true);
                 await fetchInitialComments();
                 setLoadingComments(false);
@@ -221,12 +223,8 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
         }
     };
 
-    // 찰나의 지연을 주어 스트리밍 스크립트가 실행될 시간을 줍니다.
     const timer = setTimeout(loadComments, 50);
-    
-    setInputVal(""); 
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, playerName, user]); 
 
   const fetchInitialComments = async () => {
@@ -247,13 +245,7 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
   };
 
   const fetchMoreComments = async () => {
-    if (!lastVisible) {
-        setLoadingMore(true);
-        await fetchInitialComments();
-        setLoadingMore(false);
-        return;
-    }
-    if (loadingMore) return;
+    if (!lastVisible || loadingMore) return;
     setLoadingMore(true);
     try {
       const q = query(
@@ -282,20 +274,33 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
     try {
       const commentId = `${matchId}_${playerName}_${user.uid}`;
       const newComment = {
-        userId: user.uid, userName: user.email?.split('@')[0] || "Unknown", matchId, playerName, content: inputVal, likes: 0, likedBy: [], createdAt: serverTimestamp()
+        userId: user.uid, 
+        userName: user.email?.split('@')[0] || "Unknown", 
+        matchId, 
+        playerName, 
+        content: inputVal, 
+        rating: userRating, // ⭐ 평점 데이터 추가 저장
+        likes: myComment?.likes || 0, 
+        likedBy: myComment?.likedBy || [], 
+        createdAt: serverTimestamp()
       };
       await setDoc(doc(db, "matchComments", commentId), newComment);
       await fetchInitialComments(); 
       const snap = await getDoc(doc(db, "matchComments", commentId));
       if (snap.exists()) setMyComment({ id: snap.id, ...snap.data() });
-      setInputVal("");
+      alert(myComment ? "수정되었습니다!" : "등록되었습니다!");
     } catch (e) { alert("저장 실패"); } finally { setIsSubmitting(false); }
   };
 
   const handleDelete = async () => {
     if (!confirm("삭제하시겠습니까?")) return;
     if (!myComment) return;
-    try { await deleteDoc(doc(db, "matchComments", myComment.id)); setMyComment(null); fetchInitialComments(); } catch (e) { alert("삭제 실패"); }
+    try { 
+      await deleteDoc(doc(db, "matchComments", myComment.id)); 
+      setMyComment(null); 
+      setInputVal("");
+      fetchInitialComments(); 
+    } catch (e) { alert("삭제 실패"); }
   };
 
   const handleLike = async (comment: any) => {
@@ -318,91 +323,99 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
     } catch (e) { console.error(e); }
   };
 
-  const filteredComments = comments.filter(c => c.id !== myComment?.id);
   const sortedComments = () => {
-    const combined = [...filteredComments];
-    const byLikes = [...combined].sort((a, b) => b.likes - a.likes);
+    const byLikes = [...comments].sort((a, b) => b.likes - a.likes);
     const best3 = byLikes.slice(0, 3).filter(c => c.likes > 0);
     const bestIds = new Set(best3.map(c => c.id));
-    const rest = combined.filter(c => !bestIds.has(c.id));
+    const rest = comments.filter(c => !bestIds.has(c.id));
     return { best3, rest };
   };
   const { best3, rest } = sortedComments();
 
   return (
     <div className="space-y-6">
-      
-      {/* 1. 구분선 */}
       <div className="flex items-center gap-2 pt-2">
         <div className="h-px bg-slate-800 flex-1"></div>
-        <span className="text-xs font-bold text-slate-600">COMMENTS</span>
+        <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">Comments</span>
         <div className="h-px bg-slate-800 flex-1"></div>
       </div>
 
-      {/* ⭐ 로딩 스피너: 스트리밍 데이터가 오기 전까지만 보여줌 */}
       {loadingComments ? (
         <div className="py-20 flex flex-col items-center justify-center gap-3">
           <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin"></div>
-          <p className="text-[10px] font-bold text-slate-600 animate-pulse uppercase tracking-widest">댓글 불러오는 중...</p>
+          <p className="text-[10px] font-bold text-slate-600 animate-pulse uppercase tracking-widest">불러오는 중...</p>
         </div>
       ) : (
         <>
-          {/* 2. 베스트 댓글 */}
+          {/* 1. 베스트 댓글 */}
           {best3.length > 0 && (
              <div className="space-y-4">
-                {best3.map(c => <CommentItem key={c.id} comment={c} isBest={true} onLike={() => handleLike(c)} currentUserId={user?.uid} />)}
+                {best3.map(c => (
+                  <CommentItem 
+                    key={c.id} 
+                    comment={c} 
+                    isBest={true} 
+                    onLike={() => handleLike(c)} 
+                    currentUserId={user?.uid} 
+                    maskName={maskName}
+                    onDelete={handleDelete}
+                  />
+                ))}
              </div>
           )}
 
-          {/* 3. 내 댓글 작성/보기 */}
-          {!myComment ? (
-            <div className={`border p-4 rounded-2xl shadow-lg transition-all ${hasRated ? 'bg-slate-900 border-slate-800' : 'bg-slate-900/50 border-slate-800/50'}`}>
-              <label className="text-xs font-bold text-slate-500 mb-2 block">한줄평 남기기 (100자 이내)</label>
-              
-              {!hasRated && user && (
-                 <div className="mb-3 text-center py-4 bg-slate-950/50 rounded-xl border border-dashed border-slate-800">
-                    <p className="text-xs text-slate-400 mb-2 font-bold">평점을 먼저 등록해야 작성할 수 있습니다.</p>
-                    <button onClick={onGoRate} className="bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold px-3 py-2 rounded-lg transition-colors">
-                        이 선수 평점 남기러 가기 ⚡
-                    </button>
-                 </div>
-              )}
-
-              <div className="flex gap-2">
-                <textarea 
-                  value={inputVal} 
-                  onChange={(e) => setInputVal(e.target.value.slice(0, 100))} 
-                  placeholder={
-                      !user ? "로그인 후 작성 가능합니다." :
-                      !hasRated ? "평점을 먼저 남겨주세요!" :
-                      "매너있는 평가를 남겨주세요."
-                  } 
-                  disabled={!user || isSubmitting || !hasRated} 
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-slate-200 resize-none outline-none focus:border-cyan-500/50 h-20 disabled:opacity-50 disabled:cursor-not-allowed" 
-                />
-                <button 
-                  onClick={handleSubmit} 
-                  disabled={!user || isSubmitting || !inputVal.trim() || !hasRated} 
-                  className="w-16 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl font-bold text-xs transition-colors"
-                >
-                  등록
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-cyan-950/20 border border-cyan-500/30 p-4 rounded-2xl relative">
-              <div className="flex justify-between items-start mb-2"><span className="text-[10px] font-bold text-cyan-400 bg-cyan-900/50 px-2 py-0.5 rounded">MY COMMENT</span><div className="flex gap-2"><button onClick={handleDelete} className="text-xs text-slate-500 hover:text-red-400 underline">삭제</button></div></div>
-              <p className="text-white text-sm leading-relaxed">{myComment.content}</p>
-              <div className="mt-2 text-[10px] text-slate-500 flex items-center gap-1">👍 {myComment.likes} Likes</div>
-              {userRating && <div className="absolute top-4 right-4 text-xs font-black text-cyan-500">{userRating}점</div>}
-            </div>
-          )}
-
-          {/* 4. 나머지 댓글 */}
-          <div className="space-y-4 pb-10">
-            {rest.map(c => <CommentItem key={c.id} comment={c} isBest={false} onLike={() => handleLike(c)} currentUserId={user?.uid} />)}
+          {/* 2. 댓글 작성창 (내가 쓴 글이 있어도 수정 가능하도록 항상 유지 혹은 상태에 따라 변경) */}
+          <div className={`border p-4 rounded-2xl shadow-lg transition-all ${hasRated ? 'bg-slate-900 border-slate-800' : 'bg-slate-900/50 border-slate-800/50'}`}>
+            <label className="text-xs font-bold text-slate-500 mb-2 block">
+              {myComment ? '내 코멘트 수정하기' : '한줄평 남기기 (100자 이내)'}
+            </label>
             
-            {comments.length === 0 && !myComment && <div className="text-center text-slate-600 text-xs py-10">아직 작성된 코멘트가 없습니다.</div>}
+            {!hasRated && user && (
+               <div className="mb-3 text-center py-4 bg-slate-950/50 rounded-xl border border-dashed border-slate-800">
+                  <p className="text-xs text-slate-400 mb-2 font-bold">평점을 먼저 등록해야 작성할 수 있습니다.</p>
+                  <button onClick={onGoRate} className="bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold px-3 py-2 rounded-lg transition-colors">
+                      이 선수 평점 남기러 가기 ⚡
+                  </button>
+               </div>
+            )}
+
+            <div className="flex gap-2">
+              <textarea 
+                value={inputVal} 
+                onChange={(e) => setInputVal(e.target.value.slice(0, 100))} 
+                placeholder={
+                    !user ? "로그인 후 작성 가능합니다." :
+                    !hasRated ? "평점을 먼저 남겨주세요!" :
+                    "매너있는 평가를 남겨주세요."
+                } 
+                disabled={!user || isSubmitting || !hasRated} 
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-slate-200 resize-none outline-none focus:border-cyan-500/50 h-20 disabled:opacity-50 disabled:cursor-not-allowed" 
+              />
+              <button 
+                onClick={handleSubmit} 
+                disabled={!user || isSubmitting || !inputVal.trim() || !hasRated} 
+                className="w-16 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl font-bold text-xs transition-colors"
+              >
+                {myComment ? '수정' : '등록'}
+              </button>
+            </div>
+          </div>
+
+          {/* 3. 나머지 댓글 목록 */}
+          <div className="space-y-4 pb-10">
+            {rest.map(c => (
+              <CommentItem 
+                key={c.id} 
+                comment={c} 
+                isBest={false} 
+                onLike={() => handleLike(c)} 
+                currentUserId={user?.uid} 
+                maskName={maskName}
+                onDelete={handleDelete}
+              />
+            ))}
+            
+            {comments.length === 0 && <div className="text-center text-slate-600 text-xs py-10">아직 작성된 코멘트가 없습니다.</div>}
             
             {hasMore && <button onClick={fetchMoreComments} disabled={loadingMore} className="w-full py-3 bg-slate-800 text-slate-400 text-xs font-bold rounded-xl hover:bg-slate-700 hover:text-white transition-colors flex items-center justify-center gap-2">{loadingMore ? '로딩 중...' : '더 보기 🔽'}</button>}
           </div>
@@ -412,16 +425,42 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
   );
 }
 
-function CommentItem({ comment, isBest, onLike, currentUserId }: any) {
+function CommentItem({ comment, isBest, onLike, currentUserId, maskName, onDelete }: any) {
   const isLiked = comment.likedBy?.includes(currentUserId);
+  const isMine = comment.userId === currentUserId;
+
   return (
-    <div className={`p-4 rounded-2xl border relative ${isBest ? 'bg-amber-950/10 border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.05)]' : 'bg-slate-900 border-slate-800'}`}>
+    <div className={`p-4 rounded-2xl border relative transition-all ${isBest ? 'bg-amber-950/10 border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.05)]' : 'bg-slate-900 border-slate-800'} ${isMine ? 'border-cyan-500/30 bg-cyan-950/5' : ''}`}>
        {isBest && <div className="absolute -top-2 -left-2 bg-amber-500 text-black text-[9px] font-black px-2 py-0.5 rounded-full shadow-lg">BEST</div>}
-       <div className="flex justify-between items-start mb-1.5">
-          <span className={`text-[10px] font-bold ${isBest ? 'text-amber-200' : 'text-slate-500'}`}>{comment.userName}</span>
-          <button onClick={onLike} className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full transition-all active:scale-95 ${isLiked ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}><span>{isLiked ? '❤️' : '🤍'}</span><span>{comment.likes}</span></button>
+       
+       <div className="flex justify-between items-start mb-2">
+          <div className="flex items-center gap-2">
+            {/* ⭐ 평점 배지 디자인 */}
+            <span className="bg-slate-800 border border-slate-700 text-cyan-400 text-[10px] font-black px-1.5 py-0.5 rounded-md min-w-[38px] text-center">
+              {comment.rating ? comment.rating.toFixed(1) : '-.-'}
+            </span>
+            
+            <span className={`text-[10px] font-bold ${isMine ? 'text-cyan-400' : (isBest ? 'text-amber-200' : 'text-slate-500')}`}>
+              {maskName(comment.userName)}
+            </span>
+
+            {/* ⭐ 내 댓글일 때 삭제 버튼 노출 */}
+            {isMine && (
+              <div className="flex gap-2 ml-1">
+                <button onClick={onDelete} className="text-[9px] text-slate-600 hover:text-red-400 underline decoration-slate-700">삭제</button>
+              </div>
+            )}
+          </div>
+
+          <button onClick={onLike} className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full transition-all active:scale-95 ${isLiked ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}>
+            <span>{isLiked ? '❤️' : '🤍'}</span>
+            <span>{comment.likes}</span>
+          </button>
        </div>
-       <p className="text-slate-300 text-sm font-medium leading-relaxed break-words">{comment.content}</p>
+
+       <p className="text-slate-300 text-sm font-medium leading-relaxed break-words px-0.5">
+         {comment.content}
+       </p>
     </div>
   );
 }
