@@ -265,21 +265,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
   const homeTheme = !isFinished ? 'slate' : (isHomeWin ? 'red' : 'blue');
   const awayTheme = !isFinished ? 'slate' : (isAwayWin ? 'red' : 'blue');
 
-  const checkIsTomorrow = () => {
-    const now = new Date();
-    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const KST_OFFSET = 9 * 60 * 60 * 1000;
-    const kstNow = new Date(utc + KST_OFFSET);
-    const kstTomorrow = new Date(kstNow);
-    kstTomorrow.setDate(kstNow.getDate() + 1);
-    const year = kstTomorrow.getFullYear();
-    const month = String(kstTomorrow.getMonth() + 1).padStart(2, '0');
-    const day = String(kstTomorrow.getDate()).padStart(2, '0');
-    const tomorrowStr = `${year}-${month}-${day}`;
-    return match.date.startsWith(tomorrowStr);
-  };
-  const isTomorrow = checkIsTomorrow();
-
   useEffect(() => {
     if (isOpen) { 
       fetchMyRatings(); 
@@ -366,56 +351,65 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
       setIsEditing(false); setHasParticipated(true); setCurrentStats(finalStats);
     } catch (e: any) { 
         console.error("Submit Error:", e);
-        alert(`제출 실패\n에러코드: ${e.code || 'unknown'}\n메시지: ${e.message?.substring(0, 50)}`);
+        alert(`제출 실패\n에러코드: ${e.code || 'unknown'}`);
     }
   };
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
-  // ⭐ 로고 깨짐 및 캡처 안됨 문제를 해결한 정교화된 다운로드 함수
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
     
-    // 1. 다운로드 모드 시작
     cardRef.current.classList.add('download-mode'); 
     const imgs = cardRef.current.querySelectorAll('img');
     const originalSrcs: string[] = [];
     
     try {
-      // 2. 모든 이미지를 Base64로 변환하여 브라우저 메모리에 고정 (CORS 회피)
       const tasks = Array.from(imgs).map(async (img, i) => {
         originalSrcs[i] = img.src;
         if (img.src.startsWith('data:') || img.src.includes('localhost')) return;
         
         const base64 = await convertImgToBase64(img.src);
         if (base64) {
-          // ⭐ 핵심: onload 이벤트를 활용해 Base64 데이터가 img 태그에 완전히 안착할 때까지 대기
           return new Promise((resolve) => {
-            img.onload = () => resolve(true);
-            img.onerror = () => resolve(false);
-            img.src = base64 as string;
+            const imageElement = img as HTMLImageElement;
+            imageElement.onload = () => {
+                if (imageElement.decode) {
+                    imageElement.decode()
+                        .then(() => resolve(true))
+                        .catch(() => resolve(true));
+                } else {
+                    resolve(true);
+                }
+            };
+            imageElement.onerror = () => resolve(false);
+            imageElement.src = base64 as string;
           });
         }
       });
       
       await Promise.all(tasks);
-      // 브라우저가 렌더링을 마칠 수 있도록 미세한 딜레이 부여
-      await new Promise(r => setTimeout(r, 200)); 
+      await new Promise(r => setTimeout(r, 500)); 
 
-      // 3. 캡처 수행
       const dataUrl = await htmlToImage.toPng(cardRef.current, { 
         backgroundColor: '#020617', 
         pixelRatio: 2, 
         cacheBust: true,
-        // copyStyles: true 가 가끔 깨짐을 방지함
+        skipAutoScale: true
       });
 
-      // 4. 공유 혹은 저장
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
-          const file = new File([blob], `rating.png`, { type: 'image/png' });
-          await navigator.share({ files: [file], title: '협곡평점.GG' });
+          const file = new File([blob], `협곡평점.png`, { type: 'image/png' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              try { await navigator.share({ files: [file], title: '협곡평점.GG' }); } catch (e) {}
+          } else {
+              const link = document.createElement('a');
+              link.download = `rating_${match.id}.png`;
+              link.href = dataUrl;
+              link.click();
+          }
       } else {
           const link = document.createElement('a'); 
           link.download = `rating_${match.id}.png`; 
@@ -424,13 +418,12 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
       }
     } catch(err) { 
       console.error("Download Error:", err);
-      alert("이미지 저장 실패"); 
+      alert("이미지 생성 오류"); 
     } finally {
-      // 5. ⭐ 원본 복구 (순서 중요: src를 먼저 돌려놓고 로딩이 완료된 후에 클래스 제거)
-      imgs.forEach((img, i) => { 
-        if (originalSrcs[i]) img.src = originalSrcs[i]; 
-      });
-      cardRef.current.classList.remove('download-mode');
+      imgs.forEach((img, i) => { if (originalSrcs[i]) img.src = originalSrcs[i]; });
+      setTimeout(() => {
+        if(cardRef.current) cardRef.current.classList.remove('download-mode');
+      }, 150);
     }
   };
 
@@ -444,7 +437,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
         onClick={handleCardClick} 
         className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}
     >
-      <style jsx global>{`.download-mode .hide-on-download { display: none !important; } .download-mode .team-name-text { display: none !important; } .download-mode .team-logo-img { margin-bottom: 5px; }`}</style>
+      <style jsx global>{`.download-mode .hide-on-download { display: none !important; } .download-mode .team-name-text { display: none !important; } .download-mode .team-logo-img { margin-bottom: 10px; }`}</style>
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
         <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg ${isEditing ? 'bg-indigo-900 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
           <span className="text-[10px] font-black tracking-widest uppercase">{match.league} • {match.round}</span>
@@ -464,7 +457,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
             </motion.div>
           </div>
           <div className="px-2 pt-8 flex flex-col items-center">
-            {isTomorrow && <span className="bg-amber-400 text-black text-[9px] font-black px-1.5 py-0.5 rounded mb-1 animate-pulse">내일</span>}
             <span className="text-[10px] text-slate-500 font-bold mb-2 tracking-widest">{formattedDate} {timeStr}</span>
             {match.status === 'FINISHED' ? <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg">{match.home.score} : {match.away.score}</div> : <div className="text-xl font-black italic text-slate-600 bg-slate-800 px-3 py-1 rounded-lg">VS</div>}
           </div>
@@ -511,23 +503,22 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                    <div className="flex items-center gap-2">
                      <span className="text-xs font-black text-amber-400 tracking-wider whitespace-nowrap">⚡ 도파민 지수</span>
                      <span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)} <span className="text-[10px] text-slate-500 not-italic">/ 5.0</span></span>
-                     <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-600 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
+                     <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
                    </div>
-                   {showTooltip && <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 mt-2 text-[10px] text-slate-300 leading-relaxed text-center mx-4 mb-2">내가 응원하는 팀의 성패나 경기력과는 관계없이,<br/><span className="text-amber-400 font-bold">오직 순수 재미</span>를 기준으로 주는 평점이에요.</div>}
                    <DopamineRating score={funScore} isEditing={isEditing} onChange={(v:number) => handleRatingChange(FUN_KEY, v)} />
                 </div>
               </div>
               <motion.div layout className="pt-2 space-y-3">
                 {isEditing ? (
                   <div className="flex gap-3">
-                    <button onClick={(e) => { e.stopPropagation(); setIsEditing(false); }} className="flex-1 py-3 bg-slate-800 text-slate-400 rounded-xl font-bold text-xs hover:bg-slate-700 transition-colors">취소</button>
-                    <button onClick={handleSubmit} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-500 shadow-lg shadow-indigo-500/30 transition-all">제출 완료!</button>
+                    <button onClick={(e) => { e.stopPropagation(); setIsEditing(false); }} className="flex-1 py-3 bg-slate-800 text-slate-400 rounded-xl font-bold text-xs">취소</button>
+                    <button onClick={handleSubmit} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-indigo-500/30 transition-all">제출 완료!</button>
                   </div>
                 ) : (
                   <div className="flex gap-2 items-center hide-on-download">
                     <div className="flex-1 flex gap-2">
-                        <button onClick={handleStartEdit} className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"><span>{hasParticipated ? '✏️' : '🫠'}</span><span>{hasParticipated ? '평점 수정' : '내 평점 등록'}</span></button>
-                        <button onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"><span>💬</span> 리뷰</button>
+                        <button onClick={handleStartEdit} className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] transition-all flex items-center justify-center gap-1"><span>{hasParticipated ? '✏️' : '🫠'}</span><span>{hasParticipated ? '평점 수정' : '내 평점 등록'}</span></button>
+                        <button onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] transition-all flex items-center justify-center gap-1"><span>💬</span> 리뷰</button>
                     </div>
                     <button onClick={handleDownload} className="w-10 flex items-center justify-center opacity-70 active:scale-90 transition-all"><img src="/icons/download.png" className="w-5 h-5 object-contain" alt="download"/></button>
                   </div>
@@ -563,6 +554,7 @@ function InteractiveBar({ score, align, color, onChange }: any) {
     const newS = Math.round(Math.max(0, Math.min(1, p)) * 100) / 10;
     if (newS !== score) { onChange(newS); triggerHaptic(); }
   }, [align, onChange, score, triggerHaptic]);
+
   const onStart = (e: any) => {
     e.stopPropagation();
     isDragging.current = true;
@@ -575,7 +567,13 @@ function InteractiveBar({ score, align, color, onChange }: any) {
     const x = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
     update(x);
   };
-  const onEnd = (e: any) => { e.stopPropagation(); isDragging.current = false; };
+  
+  // ⭐ 핵심: e를 인자값으로 받도록 수정
+  const onEnd = (e: any) => { 
+    if (e && e.stopPropagation) e.stopPropagation(); 
+    isDragging.current = false; 
+  };
+
   return (
     <div ref={barRef} onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd} onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
       className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`}
