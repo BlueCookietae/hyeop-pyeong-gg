@@ -34,7 +34,6 @@ const getProxyImgUrl = (url: string) => {
   return `https://wsrv.nl/?url=${cleanUrl}&output=png`;
 };
 
-// ⭐ 이미지 다운로드 문제 해결을 위한 Base64 변환 함수 추가
 const convertImgToBase64 = async (url: string) => {
   try {
     const proxyUrl = getProxyImgUrl(url);
@@ -95,16 +94,13 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
-
-  // ⭐ 추가: 현재 어떤 카드라도 편집 중인지 여부
   const [isAnyEditing, setIsAnyEditing] = useState(false);
 
   const changeTab = (newTab: number) => {
     if (newTab < 0 || newTab > 2) return;
     setCurrentTab(newTab);
     setExpandedId(null);
-    // ⭐ 탭 이동 시 즉시 최상단으로 스크롤
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     router.replace('/', { scroll: false });
   };
 
@@ -148,12 +144,14 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const touchStartY = useRef(0); 
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    // ⭐ 편집 중일 때는 스와이프 시작조차 막음
+    if (isAnyEditing) return;
     touchStartX.current = e.targetTouches[0].clientX;
     touchStartY.current = e.targetTouches[0].clientY;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    // ⭐ 편집 모드일 때는 스와이프 차단
+    // ⭐ 편집 중일 때는 스와이프 로직 실행 안 함
     if (isAnyEditing) return;
 
     const touchEndX = e.changedTouches[0].clientX;
@@ -162,6 +160,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     const distanceY = touchStartY.current - touchEndY;
     
     if (Math.abs(distanceY) > 30) return;
+    
     const minSwipeDistance = 80; 
     if (distanceX > minSwipeDistance) { if (currentTab < 2) changeTab(currentTab + 1); }
     else if (distanceX < -minSwipeDistance) { if (currentTab > 0) changeTab(currentTab - 1); }
@@ -222,7 +221,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                   awayRoster={getRosterForMatch(match.away.name, match.date, teamRosters)}
                   isOpen={expandedId === match.id}
                   onToggle={(isOpenNow: boolean) => toggleCard(match.id, isOpenNow)}
-                  // ⭐ 편집 상태를 부모에게 전달
                   onEditingStateChange={(editing: boolean) => setIsAnyEditing(editing)}
                 />
               ))
@@ -244,7 +242,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
   const [showTooltip, setShowTooltip] = useState(false);
   const [currentStats, setCurrentStats] = useState(match.stats || {});
 
-  // ⭐ 편집 상태가 바뀔 때 부모 컴포넌트에 알림
   useEffect(() => {
     onEditingStateChange(isEditing);
   }, [isEditing, onEditingStateChange]);
@@ -345,16 +342,12 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
       await runTransaction(db, async (transaction) => {
         const ratingDocRef = doc(db, "matchRatings", `${user.uid}_${match.id}`);
         const matchDocRef = doc(db, "matches", match.id);
-
         const ratingDoc = await transaction.get(ratingDocRef);
         const matchDoc = await transaction.get(matchDocRef);
-
         if (!matchDoc.exists()) throw new Error("Match not found");
-
         const currentDbStats = matchDoc.data().stats || {};
         const newStats = JSON.parse(JSON.stringify(currentDbStats)); 
         const oldRatings = ratingDoc.exists() ? ratingDoc.data().ratings : {};
-
         const submitData: Record<string, any> = {};
         Object.entries(myRatings).forEach(([name, score]) => { 
             submitData[name] = { score, comment: "" }; 
@@ -367,12 +360,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                 newStats[name].count += 1;
             }
         });
-
         finalStats = newStats;
         transaction.set(ratingDocRef, { userId: user.uid, matchId: match.id, ratings: submitData, createdAt: serverTimestamp() });
         transaction.set(matchDocRef, { stats: newStats }, { merge: true });
       });
-
       alert("평점이 반영되었습니다!");
       setIsEditing(false); setHasParticipated(true); setCurrentStats(finalStats);
     } catch (e: any) { 
@@ -383,6 +374,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
+  // ⭐ 로고 깨짐 수정을 위해 로직 정교화
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
@@ -391,13 +383,19 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
     const originalSrcs: string[] = [];
     const tasks = Array.from(imgs).map(async (img, i) => {
       originalSrcs[i] = img.src;
+      // 이미 로컬 데이터이거나 Base64인 경우 스킵
       if (img.src.startsWith('data:') || img.src.includes('localhost')) return;
       const base64 = await convertImgToBase64(img.src);
-      if (base64) { img.src = base64 as string; img.crossOrigin = 'anonymous'; }
+      if (base64) { 
+        img.src = base64 as string; 
+        // ⭐ 주의: 여기서 crossOrigin = 'anonymous'를 설정하면 
+        // 복구할 때 브라우저가 다시 fetch를 시도하여 깨질 수 있으므로 설정하지 않습니다.
+        // Base64 데이터이므로 crossOrigin 속성이 없어도 캡처가 가능합니다.
+      }
     });
     try {
       await Promise.all(tasks);
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 150)); // 렌더링 시간 확보
       const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 2, cacheBust: true });
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
@@ -407,6 +405,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
           const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click();
       }
     } catch(err) { alert("이미지 저장 실패"); } finally {
+      // ⭐ 원본 주소로 안전하게 복구
       imgs.forEach((img, i) => { if (originalSrcs[i]) img.src = originalSrcs[i]; });
       cardRef.current.classList.remove('download-mode');
     }
@@ -423,13 +422,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
         className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}
     >
       <style jsx global>{`.download-mode .hide-on-download { display: none !important; } .download-mode .team-name-text { display: none !important; } .download-mode .team-logo-img { margin-bottom: 5px; }`}</style>
-
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
         <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg ${isEditing ? 'bg-indigo-900 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
           <span className="text-[10px] font-black tracking-widest uppercase">{match.league} • {match.round}</span>
         </div>
       </div>
-
       <div className="p-8 pt-12 pb-4 text-center">
         <div className="flex justify-between items-start">
           <div className="flex-1 flex flex-col items-center gap-1">
@@ -439,8 +436,8 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
             <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
               {match.home.logo ? <img src={getDisplayImgUrl(match.home.logo)} className="w-full h-full object-contain drop-shadow-xl" alt={match.home.name}/> : match.home.name}
             </div>
-            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text">
-                <div className="h-10 flex items-center justify-center"><span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.home.name}</span></div>
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center">
+                <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.home.name}</span>
             </motion.div>
           </div>
           <div className="px-2 pt-8 flex flex-col items-center">
@@ -455,8 +452,8 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
             <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
               {match.away.logo ? <img src={getDisplayImgUrl(match.away.logo)} className="w-full h-full object-contain drop-shadow-xl" alt={match.away.name}/> : match.away.name}
             </div>
-            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text">
-                <div className="h-10 flex items-center justify-center"><span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.away.name}</span></div>
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center">
+                <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.away.name}</span>
             </motion.div>
           </div>
         </div>
@@ -467,14 +464,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} layout className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y transition-colors duration-500 cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
             <div className="p-4 space-y-2">
               {POSITIONS.map((pos, idx) => {
-                const hp = homeRoster[idx];
-                const ap = awayRoster[idx];
+                const hp = homeRoster[idx], ap = awayRoster[idx];
                 const hScore = isEditing ? (myRatings[hp] ?? 0) : (averages[hp] ?? 0);
                 const aScore = isEditing ? (myRatings[ap] ?? 0) : (averages[ap] ?? 0);
-                
                 const hName = formatPlayerName(hp, match.home.name);
                 const aName = formatPlayerName(ap, match.away.name);
-
                 return (
                   <div key={pos} className="flex flex-col gap-0">
                     <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0">
@@ -483,7 +477,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                     </div>
                     <motion.div layout className="flex items-center gap-3 h-10 relative">
                       {isEditing ? <InteractiveBar score={hScore} align="left" color="cyan" onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={homeTheme} />}
-                      <div className="w-6 flex justify-center opacity-60"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
+                      <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
                       {isEditing ? <InteractiveBar score={aScore} align="right" color="red" onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={awayTheme} />}
                     </motion.div>
                   </div>
@@ -496,19 +490,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                      <span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)} <span className="text-[10px] text-slate-500 not-italic">/ 5.0</span></span>
                      <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-600 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
                    </div>
-                   <AnimatePresence>
-                    {showTooltip && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                         <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 mt-2 text-[10px] text-slate-300 leading-relaxed text-center mx-4 mb-2">
-                            내가 응원하는 팀의 성패나 경기력과는 관계없이,<br/><span className="text-amber-400 font-bold">오직 순수 재미</span>를 기준으로 주는 평점이에요.
-                         </div>
-                      </motion.div>
-                    )}
-                   </AnimatePresence>
+                   {showTooltip && <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 mt-2 text-[10px] text-slate-300 leading-relaxed text-center mx-4 mb-2">내가 응원하는 팀의 성패나 경기력과는 관계없이,<br/><span className="text-amber-400 font-bold">오직 순수 재미</span>를 기준으로 주는 평점이에요.</div>}
                    <DopamineRating score={funScore} isEditing={isEditing} onChange={(v:number) => handleRatingChange(FUN_KEY, v)} />
                 </div>
               </div>
-              
               <motion.div layout className="pt-2 space-y-3">
                 {isEditing ? (
                   <div className="flex gap-3">
@@ -521,7 +506,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                         <button onClick={handleStartEdit} className="flex-1 py-3 border border-white/20 bg-white/5 backdrop-blur-md text-white rounded-xl font-black text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"><span>{hasParticipated ? '✏️' : '🫠'}</span><span>{hasParticipated ? '평점 수정' : '내 평점 등록'}</span></button>
                         <button onClick={(e) => { e.stopPropagation(); router.push(`/match/${match.id}`); }} className="flex-1 py-3 border border-white/10 bg-white/5 backdrop-blur-sm text-cyan-300 rounded-xl font-bold text-[10px] uppercase shadow-[0_4px_30px_rgba(0,0,0,0.1)] hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center gap-1"><span>💬</span> 리뷰</button>
                     </div>
-                    <button onClick={handleDownload} className="w-10 flex items-center justify-center opacity-70 active:scale-90 transition-all"><img src="/icons/download.png" className="w-5 h-5 object-contain" /></button>
+                    <button onClick={handleDownload} className="w-10 flex items-center justify-center opacity-70 active:scale-90 transition-all"><img src="/icons/download.png" className="w-5 h-5 object-contain" alt="download"/></button>
                   </div>
                 )}
               </motion.div>
@@ -534,13 +519,12 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
   );
 }
 
-// --- 하위 UI 컴포넌트 (InteractiveBar 등) ---
+// --- 하위 UI 컴포넌트 (버블링 차단 추가) ---
 
 function InteractiveBar({ score, align, color, onChange }: any) {
   const barRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const lastHapticRef = useRef(0);
-
   const triggerHaptic = useCallback(() => {
     const now = Date.now();
     if (now - lastHapticRef.current > 50) { 
@@ -548,36 +532,31 @@ function InteractiveBar({ score, align, color, onChange }: any) {
       lastHapticRef.current = now;
     }
   }, []);
-
   const update = useCallback((clientX: number) => {
     if (!barRef.current) return;
     const rect = barRef.current.getBoundingClientRect();
     let p = (clientX - rect.left) / rect.width;
     if (align === 'right') p = 1 - p;
     const newS = Math.round(Math.max(0, Math.min(1, p)) * 100) / 10;
-    if (newS !== score) {
-      onChange(newS);
-      triggerHaptic();
-    }
+    if (newS !== score) { onChange(newS); triggerHaptic(); }
   }, [align, onChange, score, triggerHaptic]);
-
   const onStart = (e: any) => {
+    // ⭐ 스와이프 차단을 위해 전파 중단
+    e.stopPropagation();
     isDragging.current = true;
     const x = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
     update(x);
   };
   const onMove = (e: any) => {
+    // ⭐ 전파 중단
+    e.stopPropagation();
     if (!isDragging.current) return;
     const x = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
     update(x);
   };
-  const onEnd = () => { isDragging.current = false; };
-
+  const onEnd = (e: any) => { e.stopPropagation(); isDragging.current = false; };
   return (
-    <div 
-      ref={barRef}
-      onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
-      onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
+    <div ref={barRef} onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd} onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
       className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`}
     >
       <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400'} opacity-80 pointer-events-none`} />
@@ -588,17 +567,12 @@ function InteractiveBar({ score, align, color, onChange }: any) {
 
 function ResultBar({ score, align, theme }: any) {
   const hasData = score > 0;
-  let bgClass = 'bg-slate-600';
-  let textBgClass = 'bg-slate-700';
-  if (theme === 'red') { bgClass = 'bg-red-500'; textBgClass = 'bg-red-500'; } 
-  else if (theme === 'blue') { bgClass = 'bg-blue-500'; textBgClass = 'bg-blue-600'; }
-
   return (
     <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}`}>
       <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? bgClass : 'bg-transparent'}`} />
+        <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? (theme === 'red' ? 'bg-red-500' : 'bg-blue-500') : 'bg-transparent'}`} />
       </div>
-      <div className={`w-10 h-6 flex items-center justify-center rounded-md ${hasData ? textBgClass : 'bg-slate-800'} shadow-md`}>
+      <div className={`w-10 h-6 flex items-center justify-center rounded-md ${hasData ? (theme === 'red' ? 'bg-red-500' : 'bg-blue-600') : 'bg-slate-800'} shadow-md`}>
          <span className={`text-[11px] font-bold leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span>
       </div>
     </div>
@@ -615,14 +589,16 @@ function DopamineRating({ score, isEditing, onChange }: any) {
       lastHapticRef.current = now;
     }
   };
-  const handleClick = (val: number) => {
+  const handleClick = (e: any, val: number) => {
+    // ⭐ 스와이프 차단
+    e.stopPropagation();
     if (isEditing) { onChange(val); triggerHaptic(); }
   };
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center" onTouchStart={(e) => isEditing && e.stopPropagation()} onTouchEnd={(e) => isEditing && e.stopPropagation()}>
       <div className="flex gap-1.5">
         {[1, 2, 3, 4, 5].map((idx) => (
-          <div key={idx} className="relative w-6 h-6 cursor-pointer group" onClick={() => handleClick(idx * 2)}>
+          <div key={idx} className="relative w-6 h-6 cursor-pointer group" onClick={(e) => handleClick(e, idx * 2)}>
             <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
             {starScore >= idx && <svg viewBox="0 0 24 24" className="absolute top-0 left-0 w-full h-full text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>}
             {starScore >= idx - 0.5 && starScore < idx && <div className="absolute top-0 left-0 w-1/2 h-full overflow-hidden"><svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div>}
