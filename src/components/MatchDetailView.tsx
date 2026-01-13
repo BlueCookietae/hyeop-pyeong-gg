@@ -190,20 +190,31 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
     return visible + masked;
   };
 
-  useEffect(() => {
+useEffect(() => {
     const fetchMy = async () => {
         if (!user) return;
         try {
           const snap = await getDoc(doc(db, "matchComments", `${matchId}_${playerName}_${user.uid}`));
-          if (snap.exists()) {
-            const data = snap.id ? { id: snap.id, ...snap.data() } : null;
-            setMyComment(data);
-            if (data) setInputVal(data.content); // 수정 모드 대비
+          
+          // ⭐ 에러 해결: 데이터를 먼저 변수에 담습니다.
+          const snapData = snap.data(); 
+
+          if (snap.exists() && snapData) {
+            // TypeScript가 snapData 내부의 필드를 인식할 수 있도록 처리
+            const myData = { id: snap.id, ...snapData };
+            setMyComment(myData);
+            
+            // ⭐ snapData에서 직접 content를 꺼내면 타입 에러가 발생하지 않습니다.
+            if (snapData.content) {
+              setInputVal(snapData.content);
+            }
           } else {
             setMyComment(null);
             setInputVal("");
           }
-        } catch(e) { console.error(e); }
+        } catch(e) { 
+          console.error("내 댓글 불러오기 오류:", e); 
+        }
     };
     fetchMy();
 
@@ -225,7 +236,8 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
 
     const timer = setTimeout(loadComments, 50);
     return () => clearTimeout(timer);
-  }, [matchId, playerName, user]); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId, playerName, user]);
 
   const fetchInitialComments = async () => {
     try {
