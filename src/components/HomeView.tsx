@@ -144,14 +144,12 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const touchStartY = useRef(0); 
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    // ⭐ 편집 중일 때는 스와이프 시작조차 막음
     if (isAnyEditing) return;
     touchStartX.current = e.targetTouches[0].clientX;
     touchStartY.current = e.targetTouches[0].clientY;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    // ⭐ 편집 중일 때는 스와이프 로직 실행 안 함
     if (isAnyEditing) return;
 
     const touchEndX = e.changedTouches[0].clientX;
@@ -374,39 +372,64 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
-  // ⭐ 로고 깨짐 수정을 위해 로직 정교화
+  // ⭐ 로고 깨짐 및 캡처 안됨 문제를 해결한 정교화된 다운로드 함수
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
+    
+    // 1. 다운로드 모드 시작
     cardRef.current.classList.add('download-mode'); 
     const imgs = cardRef.current.querySelectorAll('img');
     const originalSrcs: string[] = [];
-    const tasks = Array.from(imgs).map(async (img, i) => {
-      originalSrcs[i] = img.src;
-      // 이미 로컬 데이터이거나 Base64인 경우 스킵
-      if (img.src.startsWith('data:') || img.src.includes('localhost')) return;
-      const base64 = await convertImgToBase64(img.src);
-      if (base64) { 
-        img.src = base64 as string; 
-        // ⭐ 주의: 여기서 crossOrigin = 'anonymous'를 설정하면 
-        // 복구할 때 브라우저가 다시 fetch를 시도하여 깨질 수 있으므로 설정하지 않습니다.
-        // Base64 데이터이므로 crossOrigin 속성이 없어도 캡처가 가능합니다.
-      }
-    });
+    
     try {
+      // 2. 모든 이미지를 Base64로 변환하여 브라우저 메모리에 고정 (CORS 회피)
+      const tasks = Array.from(imgs).map(async (img, i) => {
+        originalSrcs[i] = img.src;
+        if (img.src.startsWith('data:') || img.src.includes('localhost')) return;
+        
+        const base64 = await convertImgToBase64(img.src);
+        if (base64) {
+          // ⭐ 핵심: onload 이벤트를 활용해 Base64 데이터가 img 태그에 완전히 안착할 때까지 대기
+          return new Promise((resolve) => {
+            img.onload = () => resolve(true);
+            img.onerror = () => resolve(false);
+            img.src = base64 as string;
+          });
+        }
+      });
+      
       await Promise.all(tasks);
-      await new Promise(r => setTimeout(r, 150)); // 렌더링 시간 확보
-      const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 2, cacheBust: true });
+      // 브라우저가 렌더링을 마칠 수 있도록 미세한 딜레이 부여
+      await new Promise(r => setTimeout(r, 200)); 
+
+      // 3. 캡처 수행
+      const dataUrl = await htmlToImage.toPng(cardRef.current, { 
+        backgroundColor: '#020617', 
+        pixelRatio: 2, 
+        cacheBust: true,
+        // copyStyles: true 가 가끔 깨짐을 방지함
+      });
+
+      // 4. 공유 혹은 저장
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
           const file = new File([blob], `rating.png`, { type: 'image/png' });
           await navigator.share({ files: [file], title: '협곡평점.GG' });
       } else {
-          const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click();
+          const link = document.createElement('a'); 
+          link.download = `rating_${match.id}.png`; 
+          link.href = dataUrl; 
+          link.click();
       }
-    } catch(err) { alert("이미지 저장 실패"); } finally {
-      // ⭐ 원본 주소로 안전하게 복구
-      imgs.forEach((img, i) => { if (originalSrcs[i]) img.src = originalSrcs[i]; });
+    } catch(err) { 
+      console.error("Download Error:", err);
+      alert("이미지 저장 실패"); 
+    } finally {
+      // 5. ⭐ 원본 복구 (순서 중요: src를 먼저 돌려놓고 로딩이 완료된 후에 클래스 제거)
+      imgs.forEach((img, i) => { 
+        if (originalSrcs[i]) img.src = originalSrcs[i]; 
+      });
       cardRef.current.classList.remove('download-mode');
     }
   };
@@ -519,7 +542,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
   );
 }
 
-// --- 하위 UI 컴포넌트 (버블링 차단 추가) ---
+// --- 하위 UI 컴포넌트 ---
 
 function InteractiveBar({ score, align, color, onChange }: any) {
   const barRef = useRef<HTMLDivElement>(null);
@@ -541,14 +564,12 @@ function InteractiveBar({ score, align, color, onChange }: any) {
     if (newS !== score) { onChange(newS); triggerHaptic(); }
   }, [align, onChange, score, triggerHaptic]);
   const onStart = (e: any) => {
-    // ⭐ 스와이프 차단을 위해 전파 중단
     e.stopPropagation();
     isDragging.current = true;
     const x = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
     update(x);
   };
   const onMove = (e: any) => {
-    // ⭐ 전파 중단
     e.stopPropagation();
     if (!isDragging.current) return;
     const x = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
@@ -590,7 +611,6 @@ function DopamineRating({ score, isEditing, onChange }: any) {
     }
   };
   const handleClick = (e: any, val: number) => {
-    // ⭐ 스와이프 차단
     e.stopPropagation();
     if (isEditing) { onChange(val); triggerHaptic(); }
   };
