@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { db, auth } from '@/lib/firebase';
-import { collection, doc, setDoc, getDocs, getDoc, deleteDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, deleteDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 // ⭐ [보안 설정] 관리자 이메일
 const ADMIN_EMAILS = [
@@ -20,12 +22,14 @@ export default function AdminPage() {
   const [pandaStatus, setPandaStatus] = useState<any>(null);
   const [isPandaSyncing, setIsPandaSyncing] = useState(false);
 
-  // --- 🛠️ 로스터 관리 상태 ---
+  // --- 🛠️ 로스터 및 데이터 관리 상태 ---
   const [availableTeams, setAvailableTeams] = useState<string[]>([]);
   const [availableYears, setAvailableYears] = useState<string[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
-  const [isLckSyncing, setIsLckSyncing] = useState(false); // 기존 LCK 일정 동기화용
+  const [isLckSyncing, setIsLckSyncing] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false); // 로고 다운로드 상태
   
+  // 입력 Form 상태
   const [selectedTeam, setSelectedTeam] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
   const [roster, setRoster] = useState(['', '', '', '', '']);
@@ -94,11 +98,13 @@ export default function AdminPage() {
   };
 
   // --- 핸들러 ---
+  
+  // 1. PandaScore 점수 동기화
   const handlePandaSync = async () => {
     if (!confirm("🐼 PandaScore 실시간 점수를 동기화하시겠습니까?")) return;
     setIsPandaSyncing(true);
     try {
-        const res = await fetch('/api/cron/update-match'); // 우리가 만든 로봇 호출
+        const res = await fetch('/api/cron/update-match'); 
         const json = await res.json();
         if (json.error) throw new Error(json.error);
         alert(json.message || `동기화 완료! (API 호출: ${json.apiCalled ? 'O' : 'X'}, 업데이트: ${json.updated}건)`);
@@ -109,37 +115,89 @@ export default function AdminPage() {
     }
   };
 
-const handleSyncLCK = async () => {
+  // 2. Riot 일정 불러오기
+  const handleSyncLCK = async () => {
     if (!confirm("LCK 전체 일정을 다시 불러오시겠습니까? (Riot API)")) return;
     setIsLckSyncing(true);
     try {
       const res = await fetch('/api/lck');
       const data = await res.json();
-
-      // ⭐ [수정] 에러 체크 강화
-      if (!res.ok || data.error) {
-        throw new Error(data.error || `서버 에러 (${res.status})`);
-      }
-      
-      // ⭐ [수정] matches가 진짜 배열인지 확인
-      if (!Array.isArray(data.matches)) {
-        throw new Error("데이터 형식이 올바르지 않습니다. (matches is not array)");
-      }
-
+      if (data.error) throw new Error(data.error);
       for (const match of data.matches) {
         await setDoc(doc(db, "matches", match.id), { ...match, createdAt: serverTimestamp() }, { merge: true });
       }
-      
       alert(`성공! ${data.count}개 경기 일정 로드 완료`);
       fetchInfoFromMatches();
-    } catch (e: any) { 
-      console.error(e); // 콘솔에 자세한 에러 출력
-      alert(`실패: ${e.message}`); 
-    } finally { 
-      setIsLckSyncing(false); 
+    } catch (e: any) { alert(e.message); } finally { setIsLckSyncing(false); }
+  };
+
+  // 3. ⭐ [신규] 로고 일괄 다운로드 (ZIP)
+  const handleDownloadLogos = async () => {
+    if (!confirm("모든 팀의 로고를 ZIP 파일로 다운로드하시겠습니까?")) return;
+    setIsDownloading(true);
+
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("teams"); // teams 폴더 생성
+      const processedCodes = new Set();
+
+      // DB의 모든 경기 기록에서 팀 정보를 긁어옵니다.
+      const snap = await getDocs(collection(db, 'matches'));
+      
+      // 병렬 처리를 위한 프로미스 배열
+      const tasks: Promise<void>[] = [];
+
+      snap.forEach((doc) => {
+        const data = doc.data();
+        const teams = [data.home, data.away];
+
+        teams.forEach((team) => {
+            // 팀 코드(T1, GEN)가 있고, 로고 URL이 있고, 아직 처리 안 했으면
+            if (team && team.code && team.logo && !processedCodes.has(team.code)) {
+                processedCodes.add(team.code);
+                
+                // 이미지 다운로드 작업
+                const task = async () => {
+                    try {
+                        // CORS 우회용 프록시 사용 (다운로드를 위해 필수)
+                        const cleanUrl = team.logo.replace(/^https?:\/\//, '');
+                        const proxyUrl = `https://wsrv.nl/?url=${cleanUrl}&output=png`;
+                        
+                        const res = await fetch(proxyUrl);
+                        const blob = await res.blob();
+                        
+                        // 파일명: T1.png, GEN.png 등
+                        folder?.file(`${team.code}.png`, blob);
+                        console.log(`✅ Downloaded: ${team.code}`);
+                    } catch (err) {
+                        console.error(`Failed to download ${team.code}:`, err);
+                    }
+                };
+                tasks.push(task());
+            }
+        });
+      });
+
+      if (tasks.length === 0) {
+        alert("다운로드할 로고가 없습니다. 경기 일정을 먼저 동기화해주세요.");
+        return;
+      }
+
+      await Promise.all(tasks); // 모든 이미지 다운로드 대기
+      
+      // ZIP 생성 및 다운로드
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, "teams_logos.zip");
+      alert(`완료! ${tasks.length}개의 로고가 포함된 ZIP 파일이 생성되었습니다.\n\n압축을 풀어서 프로젝트의 [public/teams] 폴더에 넣어주세요.`);
+
+    } catch (e: any) {
+        alert(`다운로드 실패: ${e.message}`);
+    } finally {
+        setIsDownloading(false);
     }
   };
 
+  // 4. 로스터 저장
   const handleSaveTeam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTeam || !selectedYear) return alert("팀과 년도를 선택해주세요");
@@ -152,6 +210,7 @@ const handleSyncLCK = async () => {
     } catch (e) { alert("저장 실패"); }
   };
 
+  // 5. 로스터 편집
   const handleEditClick = (team: any) => {
     if (team.id.includes('_')) {
         const parts = team.id.split('_');
@@ -167,6 +226,7 @@ const handleSyncLCK = async () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // 6. 로스터 삭제
   const handleDelete = async (id: string) => {
     if (!confirm(`삭제하시겠습니까?`)) return;
     await deleteDoc(doc(db, "teams", id));
@@ -217,13 +277,19 @@ const handleSyncLCK = async () => {
                 </div>
             </div>
 
+            {/* ⭐ 데이터 관리 컨트롤러 (버튼 모음) */}
             <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-3xl flex flex-col justify-center gap-3">
                 <button onClick={handlePandaSync} disabled={isPandaSyncing} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2">
                     {isPandaSyncing ? <span className="animate-spin">⏳</span> : <span>🐼</span>}
                     {isPandaSyncing ? "Syncing..." : "Sync Live Scores"}
                 </button>
                 <button onClick={handleSyncLCK} disabled={isLckSyncing} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl font-bold text-xs border border-slate-700 transition-all">
-                    {isLckSyncing ? "Loading..." : "📅 Reload Full Schedule (Riot)"}
+                    {isLckSyncing ? "Loading..." : "📅 Reload Schedule (Riot)"}
+                </button>
+                {/* 로고 다운로드 버튼 */}
+                <button onClick={handleDownloadLogos} disabled={isDownloading} className="w-full bg-emerald-800/50 hover:bg-emerald-700 text-emerald-400 py-3 rounded-xl font-bold text-xs border border-emerald-700/50 transition-all flex items-center justify-center gap-2">
+                    {isDownloading ? <span className="animate-spin">⏳</span> : <span>📥</span>}
+                    {isDownloading ? "Downloading..." : "Download Logos (ZIP)"}
                 </button>
             </div>
         </div>

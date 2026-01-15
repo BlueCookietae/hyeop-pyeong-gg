@@ -175,6 +175,7 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
   const [lastVisible, setLastVisible] = useState<any>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 초기 데이터가 있으면 로딩 상태 아님, 없으면 로딩
   const [loadingComments, setLoadingComments] = useState(initialComments.length === 0);
   
   const user = auth.currentUser;
@@ -182,7 +183,6 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
 
   const hasRated = userRating !== undefined && userRating > 0;
 
-  // 닉네임 익명화 함수
   const maskName = (name: string) => {
     if (!name) return "****";
     const visible = name.substring(0, 3);
@@ -190,21 +190,16 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
     return visible + masked;
   };
 
-useEffect(() => {
+  useEffect(() => {
+    // 1. 내 댓글 가져오기
     const fetchMy = async () => {
         if (!user) return;
         try {
           const snap = await getDoc(doc(db, "matchComments", `${matchId}_${playerName}_${user.uid}`));
-          
-          // ⭐ 에러 해결: 데이터를 먼저 변수에 담습니다.
           const snapData = snap.data(); 
-
           if (snap.exists() && snapData) {
-            // TypeScript가 snapData 내부의 필드를 인식할 수 있도록 처리
             const myData = { id: snap.id, ...snapData };
             setMyComment(myData);
-            
-            // ⭐ snapData에서 직접 content를 꺼내면 타입 에러가 발생하지 않습니다.
             if (snapData.content) {
               setInputVal(snapData.content);
             }
@@ -218,24 +213,39 @@ useEffect(() => {
     };
     fetchMy();
 
-    const loadComments = async () => {
+    // 2. 전체 댓글 (스트리밍 데이터 확인 및 폴백)
+    const checkStreamedData = () => {
         const streamed = (window as any).__INITIAL_COMMENTS__;
-        if (streamed && streamed.length > 0) {
+        if (streamed && Array.isArray(streamed)) {
             const filtered = streamed.filter((c: any) => c.playerName === playerName);
             setComments(filtered);
             setLoadingComments(false);
             setHasMore(filtered.length >= PER_PAGE);
-        } else {
-            if (comments.length === 0 || playerName) {
-                setLoadingComments(true);
-                await fetchInitialComments();
-                setLoadingComments(false);
-            }
+            return true;
         }
+        return false;
     };
 
-    const timer = setTimeout(loadComments, 50);
-    return () => clearTimeout(timer);
+    if (!loadingComments) return; // 이미 데이터가 있으면 패스
+
+    // 즉시 확인
+    if (checkStreamedData()) return;
+
+    // 약간의 딜레이를 두고 폴링 (네트워크 속도 차이 대비)
+    const timer = setInterval(() => {
+        if (checkStreamedData()) clearInterval(timer);
+    }, 100);
+
+    // 3초가 지나도 스트리밍 데이터가 없으면 직접 fetch (Fallback)
+    const fallbackTimer = setTimeout(async () => {
+        clearInterval(timer);
+        if (comments.length === 0) {
+            await fetchInitialComments();
+            setLoadingComments(false);
+        }
+    }, 3000);
+
+    return () => { clearInterval(timer); clearTimeout(fallbackTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, playerName, user]);
 
@@ -291,7 +301,7 @@ useEffect(() => {
         matchId, 
         playerName, 
         content: inputVal, 
-        rating: userRating, // ⭐ 평점 데이터 추가 저장
+        rating: userRating,
         likes: myComment?.likes || 0, 
         likedBy: myComment?.likedBy || [], 
         createdAt: serverTimestamp()
@@ -376,7 +386,7 @@ useEffect(() => {
              </div>
           )}
 
-          {/* 2. 댓글 작성창 (내가 쓴 글이 있어도 수정 가능하도록 항상 유지 혹은 상태에 따라 변경) */}
+          {/* 2. 댓글 작성창 */}
           <div className={`border p-4 rounded-2xl shadow-lg transition-all ${hasRated ? 'bg-slate-900 border-slate-800' : 'bg-slate-900/50 border-slate-800/50'}`}>
             <label className="text-xs font-bold text-slate-500 mb-2 block">
               {myComment ? '내 코멘트 수정하기' : '한줄평 남기기 (100자 이내)'}
@@ -447,7 +457,6 @@ function CommentItem({ comment, isBest, onLike, currentUserId, maskName, onDelet
        
        <div className="flex justify-between items-start mb-2">
           <div className="flex items-center gap-2">
-            {/* ⭐ 평점 배지 디자인 */}
             <span className="bg-slate-800 border border-slate-700 text-cyan-400 text-[10px] font-black px-1.5 py-0.5 rounded-md min-w-[38px] text-center">
               {comment.rating ? comment.rating.toFixed(1) : '-.-'}
             </span>
@@ -456,7 +465,6 @@ function CommentItem({ comment, isBest, onLike, currentUserId, maskName, onDelet
               {maskName(comment.userName)}
             </span>
 
-            {/* ⭐ 내 댓글일 때 삭제 버튼 노출 */}
             {isMine && (
               <div className="flex gap-2 ml-1">
                 <button onClick={onDelete} className="text-[9px] text-slate-600 hover:text-red-400 underline decoration-slate-700">삭제</button>

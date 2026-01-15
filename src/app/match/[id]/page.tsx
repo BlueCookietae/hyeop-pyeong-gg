@@ -1,9 +1,8 @@
 import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore'; 
 import MatchDetailView from '@/components/MatchDetailView';
-import { Suspense } from 'react'; // ⭐ 추가
+import { Suspense } from 'react'; 
 
-// ⭐ 60초 캐싱 (과금 방지 및 성능 유지)
 export const revalidate = 60; 
 
 const formatPlayerName = (fullName: string, teamName: string) => {
@@ -22,7 +21,6 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   const matchId = id;
   
   try {
-    // 1. 경기 데이터 가져오기 (가장 먼저 수행)
     const matchSnap = await getDoc(doc(db, "matches", matchId));
     
     if (!matchSnap.exists()) {
@@ -37,7 +35,6 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       date: data.date 
     };
 
-    // 평점 계산 로직 (기존 유지)
     const avgRatings: Record<string, number> = {};
     const stats = data.stats || {};
     Object.keys(stats).forEach(key => {
@@ -46,7 +43,6 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       }
     });
 
-    // 2. 로스터 가져오기 (병렬 처리 유지)
     const year = data.date ? data.date.split('-')[0] : '2025';
     const homeId = `${data.home.name}_${year}`;
     const awayId = `${data.away.name}_${year}`;
@@ -64,20 +60,17 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
       away: rawAway.map((n: string) => formatPlayerName(n, data.away.name))
     };
 
-    // 3. 렌더링
     return (
       <>
-        {/* ⭐ 핵심 1: 댓글은 빈 배열로 넘겨서 MatchDetailView가 즉시 뜨게 합니다. */}
+        {/* 카드(가벼움)를 먼저 렌더링 -> 페이지 이동 체감 속도 향상 */}
         <MatchDetailView 
           matchData={matchData} 
           initialRosters={rosters}
           initialAvgRatings={avgRatings}
-          initialComments={[]} 
+          initialComments={[]} // 댓글은 빈 배열로 시작
         />
 
-        {/* ⭐ 핵심 2: 댓글 데이터 페칭을 별도의 서버 컴포넌트로 분리하여 Suspense로 감쌉니다.
-            메인 페이지는 이 컴포넌트가 완료될 때까지 기다리지 않고 먼저 응답을 보냅니다.
-        */}
+        {/* 무거운 댓글 데이터는 비동기로 불러와서 클라이언트에 주입 */}
         <Suspense fallback={null}>
           <CommentsDataFetcher matchId={matchId} />
         </Suspense>
@@ -85,15 +78,13 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
     );
 
   } catch (e) {
-    console.error("🔥 Server Fetch Error (Critical):", e);
-    return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">데이터 로딩 중 치명적 오류가 발생했습니다.</div>;
+    console.error("Critical Error:", e);
+    return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">오류가 발생했습니다.</div>;
   }
 }
 
-// --- 별도의 댓글 전용 서버 컴포넌트 (백그라운드에서 실행됨) ---
 async function CommentsDataFetcher({ matchId }: { matchId: string }) {
   try {
-    // 여기서 50개 조회를 수행합니다. (캐싱 활용됨)
     const commentsQuery = query(
       collection(db, "matchComments"),
       where("matchId", "==", matchId),
@@ -108,15 +99,12 @@ async function CommentsDataFetcher({ matchId }: { matchId: string }) {
       createdAt: d.data().createdAt?.toDate ? d.data().createdAt.toDate().toISOString() : null
     }));
 
-    // 데이터를 브라우저의 전역 객체로 밀어넣어주는 인젝터를 리턴합니다.
     return <CommentsInjector comments={serverComments} />;
   } catch (e) {
-    console.error("⚠️ 댓글 스트리밍 실패:", e);
     return null;
   }
 }
 
-// --- 클라이언트 데이터 주입용 헬퍼 ---
 function CommentsInjector({ comments }: { comments: any[] }) {
   return (
     <script 
