@@ -1,80 +1,84 @@
 import { NextResponse } from 'next/server';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 
-// LoL Esports 공식 내부 API 설정값
-const LOLESPORTS_API_URL = "https://esports-api.lolesports.com/persisted/gw/getSchedule";
-const API_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"; // 웹사이트에서 사용하는 공개 API 키
-const LCK_LEAGUE_ID = "98767991310872058"; // LCK 고유 ID
+const PANDASCORE_TOKEN = process.env.PANDASCORE_TOKEN;
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!PANDASCORE_TOKEN) return NextResponse.json({ error: "Missing Token" }, { status: 500 });
+
   try {
-    // 1. LoL Esports 서버에 일정 요청
-    const url = new URL(LOLESPORTS_API_URL);
-    url.searchParams.append("hl", "ko-KR"); // 한국어 데이터
-    url.searchParams.append("leagueId", LCK_LEAGUE_ID);
-    
-// 👇 [중요] 여기 headers 부분을 수정하세요!
-    const res = await fetch(url.toString(), {
-      headers: { 
-        "x-api-key": API_KEY,
-        // ⭐ 이 줄이 없으면 봇으로 인식되어 차단됩니다!
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      }
-    });
-    
-if (!res.ok) {
-      const errText = await res.text();
-      console.error(`❌ API 에러 발생 (${res.status}):`, errText);
-      throw new Error(`API 접속 실패: ${res.status}`);
-    }
-    
-    const data = await res.json();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const todayStr = new Date(Date.now() + kstOffset).toISOString().split('T')[0];
 
-    // 2. 우리 DB 구조에 맞게 데이터 가공 (Formatting)
-    const events = data.data.schedule.events;
-    
-    // 'match' 타입이면서 팀 정보가 있는 경기만 필터링
-    const formattedMatches = events
-      .filter((e: any) => e.type === 'match' && e.match.teams.length === 2)
-      .map((e: any) => {
-        const match = e.match;
-        const homeTeam = match.teams[0];
-        const awayTeam = match.teams[1];
+    // 1. DB에서 오늘 경기 가져오기
+    const q = query(collection(db, 'matches'), where('date', '>=', todayStr));
+    const snap = await getDocs(q);
+
+    // 2. 필터링 (이미 끝난 경기 제외)
+    const activeMatches = snap.docs.filter(doc => doc.data().status !== 'FINISHED');
+    if (activeMatches.length === 0) return NextResponse.json({ message: "No matches." });
+
+    // 3. PandaScore 호출
+    const response = await fetch(
+      `https://api.pandascore.co/lol/matches?filter[begin_at]=${todayStr}&token=${PANDASCORE_TOKEN}`
+    );
+    const pandaData = await response.json();
+    let updatedCount = 0;
+
+    // 4. ⭐ [핵심] Code(Acronym) 기반 매칭
+    for (const myMatch of activeMatches) {
+        const myData = myMatch.data();
         
-        // 날짜 포맷팅 (YYYY-MM-DD HH:MM)
-        const dateObj = new Date(e.startTime);
-        const dateStr = dateObj.toISOString().split('T')[0];
-        const timeStr = dateObj.toTimeString().split(' ')[0].substring(0, 5);
+        // DB에 저장된 code 사용 (없으면 name으로 fallback)
+        const homeCode = myData.home.code || myData.home.name;
+        const awayCode = myData.away.code || myData.away.name;
 
-        return {
-          // 중복 방지용 ID (리그명_날짜_팀)
-          id: `LCK_${dateStr}_${homeTeam.code}_vs_${awayTeam.code}`,
-          league: e.league.name, // "LCK"
-          round: e.blockName,    // "Week 1" 등
-          date: `${dateStr} ${timeStr}`,
-          status: e.state === 'unstarted' ? 'SCHEDULED' : (e.state === 'completed' ? 'FINISHED' : 'LIVE'),
-          home: {
-            name: homeTeam.name,      // "T1"
-            code: homeTeam.code,      // "T1"
-            logo: homeTeam.image,     // 공식 로고 URL
-            score: homeTeam.result?.gameWins || 0
-          },
-          away: {
-            name: awayTeam.name,      // "Gen.G"
-            code: awayTeam.code,      // "GEN"
-            logo: awayTeam.image,
-            score: awayTeam.result?.gameWins || 0
-          },
-          matchId: match.id // 나중에 상세 통계 가져올 때 쓸 ID
-        };
-      });
+        // PandaScore에서 팀 찾기 (acronym == code)
+        const foundPandaMatch = pandaData.find((p: any) => {
+            const teamA = p.opponents[0]?.opponent?.acronym;
+            const teamB = p.opponents[1]?.opponent?.acronym;
+            
+            // "T1" == "T1", "GEN" == "GEN" -> 100% 일치!
+            const hasHome = teamA === homeCode || teamB === homeCode;
+            const hasAway = teamA === awayCode || teamB === awayCode;
+            
+            return hasHome && hasAway;
+        });
 
-    return NextResponse.json({ 
-      count: formattedMatches.length,
-      matches: formattedMatches 
-    });
+        if (foundPandaMatch) {
+            // 점수 업데이트 로직 (이전과 동일)
+            const teamA_Res = foundPandaMatch.results[0];
+            const teamB_Res = foundPandaMatch.results[1];
+            const teamA_Code = foundPandaMatch.opponents[0].opponent.acronym;
+            
+            let realHomeScore = 0;
+            let realAwayScore = 0;
 
-  } catch (error: any) {
-    console.error("LCK 로드 에러:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+            if (teamA_Code === homeCode) {
+                realHomeScore = teamA_Res.score;
+                realAwayScore = teamB_Res.score;
+            } else {
+                realHomeScore = teamB_Res.score;
+                realAwayScore = teamA_Res.score;
+            }
+
+            const newStatus = foundPandaMatch.status === 'finished' ? 'FINISHED' : 'LIVE';
+
+            if (myData.home.score !== realHomeScore || myData.away.score !== realAwayScore || myData.status !== newStatus) {
+                await updateDoc(doc(db, 'matches', myMatch.id), {
+                    'home.score': realHomeScore,
+                    'away.score': realAwayScore,
+                    'status': newStatus
+                });
+                updatedCount++;
+            }
+        }
+    }
+
+    return NextResponse.json({ success: true, updated: updatedCount });
+
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
