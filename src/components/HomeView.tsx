@@ -23,21 +23,6 @@ const POS_ICONS: Record<string, string> = {
 };
 
 // --- 유틸리티 ---
-const localImageToBase64 = async (url: string) => {
-  try {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
-  } catch (e) {
-    console.error("Local img conversion failed:", e);
-    return url; 
-  }
-};
-
 const dataURItoBlob = (dataURI: string) => {
   const byteString = atob(dataURI.split(',')[1]);
   const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
@@ -79,7 +64,7 @@ const getKSTDate = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-// --- 애니메이션 유틸 (Ease-Out Quart) ---
+// --- 애니메이션 유틸 ---
 const easeOutQuart = (t: number, b: number, c: number, d: number) => {
   t /= d;
   t--;
@@ -279,9 +264,46 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
   const [showTooltip, setShowTooltip] = useState(false);
   const [currentStats, setCurrentStats] = useState(match.stats || {});
   
-  // 공백 제거 및 안전 처리
   const homeCode = (match.home.code || match.home.name).trim();
   const awayCode = (match.away.code || match.away.name).trim();
+
+  // ⭐ [핵심전략] 이미지를 미리 Base64로 변환해서 저장할 State
+  const [teamLogos, setTeamLogos] = useState({ home: '', away: '' });
+
+  // ⭐ [핵심전략] 컴포넌트가 뜨자마자 로고를 Fetch해서 Base64로 만듦
+  useEffect(() => {
+    const preloadLogos = async () => {
+        // 내부 API 사용 없이 직접 fetch (같은 도메인이므로 CORS 문제 없음)
+        const fetchAndConvert = async (code: string) => {
+            try {
+                // public 폴더의 이미지를 직접 가져옴
+                const res = await fetch(`/teams/${code}.png`);
+                if (!res.ok) throw new Error('Network response was not ok');
+                const blob = await res.blob();
+                
+                return new Promise<string>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result as string);
+                    reader.readAsDataURL(blob);
+                });
+            } catch (e) {
+                // 실패하면 원본 경로라도 반환 (최소한 안 깨지게)
+                return `/teams/${code}.png`;
+            }
+        };
+
+        const [h, a] = await Promise.all([
+            fetchAndConvert(homeCode),
+            fetchAndConvert(awayCode)
+        ]);
+        
+        // 변환된 Base64 데이터를 State에 저장 -> 렌더링에 사용
+        setTeamLogos({ home: h, away: a });
+    };
+
+    preloadLogos();
+  }, [homeCode, awayCode]);
+
 
   useEffect(() => { onEditingStateChange(isEditing); }, [isEditing, onEditingStateChange]);
   useEffect(() => { if (match.stats) setCurrentStats(match.stats); }, [match.stats]);
@@ -411,57 +433,56 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
-  // 모바일 캡처 버그 수정 (srcset 제거 & 대기)
+  // ⭐ 로고 고정 + 링크 공유 (즉시 캡처)
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
+    
     cardRef.current.classList.add('download-mode'); 
     
     try {
-      const imgs = cardRef.current.querySelectorAll('img');
-      const originalSrcs: string[] = [];
-      const originalSrcsets: string[] = [];
-      const tasks: Promise<void>[] = [];
-
-      imgs.forEach((img, i) => {
-        originalSrcs[i] = img.src; 
-        originalSrcsets[i] = img.srcset; 
-
-        if (img.src && !img.src.startsWith('data:')) {
-            const task = async () => {
-                const base64 = await localImageToBase64(img.src);
-                if (base64) {
-                    img.srcset = ''; 
-                    img.src = base64 as string;
-                }
-            };
-            tasks.push(task());
-        }
-      });
-
-      await Promise.all(tasks);
-      await new Promise(resolve => setTimeout(resolve, 500));
-
+      // 1. 이미지가 이미 Base64로 렌더링되어 있으므로 대기 없이 즉시 캡처
       const dataUrl = await htmlToImage.toPng(cardRef.current, { 
           backgroundColor: '#020617', 
           pixelRatio: 3, 
-          cacheBust: true, 
+          cacheBust: false,  // ⭐ Base64 깨짐 방지
           skipAutoScale: true 
       });
 
+      // 2. 공유
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
-          const file = new File([blob], `협곡평점.png`, { type: 'image/png' });
-          if (navigator.canShare && navigator.canShare({ files: [file] })) try { await navigator.share({ files: [file], title: '협곡평점.GG' }); } catch (e) {}
-          else { const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click(); }
-      } else { const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click(); }
-      
-      imgs.forEach((img, i) => { 
-          if (originalSrcs[i]) img.src = originalSrcs[i]; 
-          if (originalSrcsets[i]) img.srcset = originalSrcsets[i];
-      });
+          const file = new File([blob], `rating_${match.id}.png`, { type: 'image/png' });
+          
+          const shareUrl = `${window.location.origin}/?expanded=${match.id}`;
+          const shareText = `[협곡평점.GG]\n${match.home.name} vs ${match.away.name} 경기 평점입니다.\n👇 리뷰 보러가기\n${shareUrl}`;
 
-    } catch(err) { console.error(err); alert("이미지 저장 실패"); } finally {
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              try { 
+                  await navigator.share({ 
+                      files: [file],       
+                      title: '협곡평점.GG', 
+                      text: shareText,     
+                      url: shareUrl        
+                  }); 
+              } catch (e) { console.log("공유 취소됨"); }
+          } else { 
+              const link = document.createElement('a'); 
+              link.download = `rating_${match.id}.png`; 
+              link.href = dataUrl; 
+              link.click(); 
+          }
+      } else { 
+          const link = document.createElement('a'); 
+          link.download = `rating_${match.id}.png`; 
+          link.href = dataUrl; 
+          link.click(); 
+      }
+
+    } catch(err) { 
+        console.error(err); 
+        alert("이미지 저장 실패"); 
+    } finally {
       cardRef.current.classList.remove('download-mode');
     }
   };
@@ -476,7 +497,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
         onClick={handleCardClick} 
         className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50 shadow-indigo-500/10' : 'bg-slate-900 border-slate-800 hover:bg-slate-800/80'}`}
     >
-      <style jsx global>{`.download-mode .hide-on-download { display: none !important; } .download-mode .team-name-text { display: none !important; } .download-mode .team-logo-img { margin-bottom: 10px; }`}</style>
+      <style jsx global>{`
+        .download-mode .hide-on-download { display: none !important; }
+      `}</style>
+
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
         <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg ${isEditing ? 'bg-indigo-900 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
           <span className="text-[10px] font-black tracking-widest uppercase">{match.league} • {match.round}</span>
@@ -489,17 +513,17 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             
-            <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
+            <div className="w-16 h-16 flex items-center justify-center transition-all">
+                {/* ⭐ [HOME] 변환된 Base64(teamLogos.home)를 우선 사용, 없으면 원본 */}
                 <img 
-                    src={`/teams/${homeCode}.png`} 
+                    src={teamLogos.home || `/teams/${homeCode}.png`} 
                     onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                        // 에러나면 그냥 숨김처리 (텍스트 대체 안함)
+                        (e.target as HTMLImageElement).style.opacity = '0';
                     }}
-                    className="w-full h-full object-contain drop-shadow-xl" 
+                    className="w-full h-full object-contain drop-shadow-xl team-logo-img" 
                     alt={match.home.name}
                 />
-                <span className="hidden font-black italic text-xl">{homeCode}</span>
             </div>
 
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center">
@@ -516,17 +540,16 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             
-            <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
+            <div className="w-16 h-16 flex items-center justify-center transition-all">
+                {/* ⭐ [AWAY] 변환된 Base64 사용 */}
                 <img 
-                    src={`/teams/${awayCode}.png`} 
+                    src={teamLogos.away || `/teams/${awayCode}.png`} 
                     onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                        (e.target as HTMLImageElement).style.opacity = '0';
                     }}
-                    className="w-full h-full object-contain drop-shadow-xl" 
+                    className="w-full h-full object-contain drop-shadow-xl team-logo-img" 
                     alt={match.away.name}
                 />
-                <span className="hidden font-black italic text-xl">{awayCode}</span>
             </div>
 
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center">
@@ -546,7 +569,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
             className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} 
             onClick={(e) => e.stopPropagation()}
           >
-            {/* ⭐ 하이브리드 간격: 수정(space-y-4) vs 보기(space-y-1.5) */}
+            {/* ⭐ 하이브리드 간격 (수정/보기) */}
             <div className={`p-5 ${isEditing ? 'space-y-4' : 'space-y-1.5'}`}> 
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx], ap = awayRoster[idx];
@@ -567,13 +590,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
 
                 return (
                   <div key={pos} className="flex flex-col gap-0 mb-1">
-                    {/* 텍스트 간격: 수정(mb-1.5) vs 보기(mb-0) */}
                     <div className={`flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider ${isEditing ? 'mb-1.5' : 'mb-0'} relative z-10 leading-none`}>
                       <span className="truncate w-24">{hName}</span>
                       <span className="truncate w-24 text-right">{aName}</span>
                     </div>
                     
-                    {/* 바 높이: 수정(h-9) vs 보기(h-8) & gap-2 고정 */}
                     <motion.div layout className={`flex items-center gap-2 ${isEditing ? 'h-9' : 'h-8'} relative`}>
                       {isEditing ? <InteractiveBar score={hScore} align="left" color={hColor} onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={hColor} />}
                       <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
@@ -646,7 +667,6 @@ function InteractiveBar({ score, align, color, onChange }: any) {
   return ( <div ref={barRef} onMouseDown={onStart} onTouchStart={onStart} onTouchMove={onTouchMove} className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`} style={{ touchAction: 'none' }}> <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'red' ? 'bg-red-500' : color === 'blue' ? 'bg-blue-500' : color === 'cyan' ? 'bg-cyan-400' : 'bg-slate-600'} opacity-80 pointer-events-none`} /> <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none drop-shadow-md">{score.toFixed(1)}</span> </div> );
 }
 
-// ⭐ [수정] ResultBar 두께 h-2, 뱃지 너비 w-8, 색상 투명도 /90
 function ResultBar({ score, align, theme }: any) { 
   const hasData = score > 0; 
   let barColor = 'bg-slate-600'; 

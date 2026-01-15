@@ -12,6 +12,21 @@ const ADMIN_EMAILS = [
   "ggt3944@gmail.com", 
 ];
 
+// ⭐ [핵심 추가] UTC 시간을 한국 시간(KST) 문자열로 변환하는 함수
+const convertToKST = (utcString: string) => {
+  if (!utcString) return "";
+  
+  // 1. 입력받은 시간(UTC)을 Date 객체로 변환
+  const date = new Date(utcString);
+  
+  // 2. 9시간(ms 단위)을 더함
+  const kstOffset = 9 * 60 * 60 * 1000;
+  const kstDate = new Date(date.getTime() + kstOffset);
+  
+  // 3. "YYYY-MM-DD HH:mm" 포맷으로 변환
+  return kstDate.toISOString().replace("T", " ").substring(0, 16);
+};
+
 export default function AdminPage() {
   // --- 🔐 인증 상태 ---
   const [user, setUser] = useState<any>(null);
@@ -115,23 +130,36 @@ export default function AdminPage() {
     }
   };
 
-  // 2. Riot 일정 불러오기
+  // 2. Riot 일정 불러오기 (⭐ KST 시간 보정 추가됨)
   const handleSyncLCK = async () => {
-    if (!confirm("LCK 전체 일정을 다시 불러오시겠습니까? (Riot API)")) return;
+    if (!confirm("LCK 전체 일정을 다시 불러오시겠습니까? (Riot API)\n\n⚠️ 기존 데이터의 날짜 형식이 UTC라면 KST로 변환되어 저장됩니다.")) return;
     setIsLckSyncing(true);
     try {
       const res = await fetch('/api/lck');
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      
       for (const match of data.matches) {
-        await setDoc(doc(db, "matches", match.id), { ...match, createdAt: serverTimestamp() }, { merge: true });
+        // ⭐ [중요] 여기서 시간을 한국 시간으로 변환!
+        // API가 주는 startTime이나 date 필드를 확인해서 변환합니다.
+        const originDate = match.startTime || match.date; 
+        const kstDate = convertToKST(originDate);
+
+        // 변환된 날짜로 덮어쓰기
+        const matchData = {
+            ...match,
+            date: kstDate, 
+            createdAt: serverTimestamp() 
+        };
+
+        await setDoc(doc(db, "matches", match.id), matchData, { merge: true });
       }
-      alert(`성공! ${data.count}개 경기 일정 로드 완료`);
+      alert(`성공! ${data.count}개 경기 일정 로드 및 KST 시간 보정 완료`);
       fetchInfoFromMatches();
     } catch (e: any) { alert(e.message); } finally { setIsLckSyncing(false); }
   };
 
-  // 3. ⭐ [신규] 로고 일괄 다운로드 (ZIP)
+  // 3. 로고 일괄 다운로드 (ZIP)
   const handleDownloadLogos = async () => {
     if (!confirm("모든 팀의 로고를 ZIP 파일로 다운로드하시겠습니까?")) return;
     setIsDownloading(true);
@@ -141,10 +169,7 @@ export default function AdminPage() {
       const folder = zip.folder("teams"); // teams 폴더 생성
       const processedCodes = new Set();
 
-      // DB의 모든 경기 기록에서 팀 정보를 긁어옵니다.
       const snap = await getDocs(collection(db, 'matches'));
-      
-      // 병렬 처리를 위한 프로미스 배열
       const tasks: Promise<void>[] = [];
 
       snap.forEach((doc) => {
@@ -152,21 +177,17 @@ export default function AdminPage() {
         const teams = [data.home, data.away];
 
         teams.forEach((team) => {
-            // 팀 코드(T1, GEN)가 있고, 로고 URL이 있고, 아직 처리 안 했으면
             if (team && team.code && team.logo && !processedCodes.has(team.code)) {
                 processedCodes.add(team.code);
                 
-                // 이미지 다운로드 작업
                 const task = async () => {
                     try {
-                        // CORS 우회용 프록시 사용 (다운로드를 위해 필수)
                         const cleanUrl = team.logo.replace(/^https?:\/\//, '');
                         const proxyUrl = `https://wsrv.nl/?url=${cleanUrl}&output=png`;
                         
                         const res = await fetch(proxyUrl);
                         const blob = await res.blob();
                         
-                        // 파일명: T1.png, GEN.png 등
                         folder?.file(`${team.code}.png`, blob);
                         console.log(`✅ Downloaded: ${team.code}`);
                     } catch (err) {
@@ -183,9 +204,8 @@ export default function AdminPage() {
         return;
       }
 
-      await Promise.all(tasks); // 모든 이미지 다운로드 대기
+      await Promise.all(tasks); 
       
-      // ZIP 생성 및 다운로드
       const content = await zip.generateAsync({ type: "blob" });
       saveAs(content, "teams_logos.zip");
       alert(`완료! ${tasks.length}개의 로고가 포함된 ZIP 파일이 생성되었습니다.\n\n압축을 풀어서 프로젝트의 [public/teams] 폴더에 넣어주세요.`);
@@ -254,7 +274,7 @@ export default function AdminPage() {
           <button onClick={() => signOut(auth)} className="text-red-500 text-xs font-bold hover:text-red-400">LOGOUT</button>
         </div>
 
-        {/* ⭐ PandaScore 모니터링 카드 */}
+        {/* PandaScore 모니터링 */}
         <div className="grid md:grid-cols-3 gap-6 mb-10">
             <div className="md:col-span-2 bg-slate-900 border border-slate-800 p-6 rounded-3xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10 text-6xl">🐼</div>
@@ -277,16 +297,15 @@ export default function AdminPage() {
                 </div>
             </div>
 
-            {/* ⭐ 데이터 관리 컨트롤러 (버튼 모음) */}
+            {/* 데이터 관리 컨트롤러 */}
             <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-3xl flex flex-col justify-center gap-3">
                 <button onClick={handlePandaSync} disabled={isPandaSyncing} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2">
                     {isPandaSyncing ? <span className="animate-spin">⏳</span> : <span>🐼</span>}
                     {isPandaSyncing ? "Syncing..." : "Sync Live Scores"}
                 </button>
                 <button onClick={handleSyncLCK} disabled={isLckSyncing} className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl font-bold text-xs border border-slate-700 transition-all">
-                    {isLckSyncing ? "Loading..." : "📅 Reload Schedule (Riot)"}
+                    {isLckSyncing ? "Loading..." : "📅 Reload Schedule (KST Patch)"}
                 </button>
-                {/* 로고 다운로드 버튼 */}
                 <button onClick={handleDownloadLogos} disabled={isDownloading} className="w-full bg-emerald-800/50 hover:bg-emerald-700 text-emerald-400 py-3 rounded-xl font-bold text-xs border border-emerald-700/50 transition-all flex items-center justify-center gap-2">
                     {isDownloading ? <span className="animate-spin">⏳</span> : <span>📥</span>}
                     {isDownloading ? "Downloading..." : "Download Logos (ZIP)"}
@@ -294,9 +313,8 @@ export default function AdminPage() {
             </div>
         </div>
 
-        {/* 로스터 관리 섹션 */}
+        {/* 로스터 관리 */}
         <div className="grid md:grid-cols-2 gap-8">
-          {/* 입력 폼 */}
           <div className="bg-slate-900/50 p-6 rounded-[2rem] border border-slate-800 h-fit sticky top-10">
             <h2 className="text-sm font-bold text-slate-500 mb-6 uppercase tracking-widest">Roster Editor</h2>
             <form onSubmit={handleSaveTeam} className="space-y-4">
@@ -329,7 +347,6 @@ export default function AdminPage() {
             </form>
           </div>
 
-          {/* 목록 */}
           <div className="space-y-3 pb-20">
             <h2 className="text-sm font-bold text-slate-500 mb-2 uppercase tracking-widest px-2">Registered ({teams.length})</h2>
             {teams.map((team) => (
