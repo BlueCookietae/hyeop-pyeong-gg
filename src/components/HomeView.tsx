@@ -23,6 +23,23 @@ const POS_ICONS: Record<string, string> = {
 };
 
 // --- 유틸리티 ---
+
+// 로컬 이미지를 Base64로 빠르게 변환 (모바일 캡처 누락 방지용)
+const localImageToBase64 = async (url: string) => {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.error("Local img conversion failed:", e);
+    return url; // 실패하면 원래 주소 반환
+  }
+};
+
 const dataURItoBlob = (dataURI: string) => {
   const byteString = atob(dataURI.split(',')[1]);
   const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
@@ -339,25 +356,64 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
+  // ⭐ [핵심] 이미지 누락 방지를 위한 Base64 변환 & 캡처
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
     
     cardRef.current.classList.add('download-mode'); 
+    
     try {
+      // 1. 카드 내의 모든 이미지를 찾습니다.
+      const imgs = cardRef.current.querySelectorAll('img');
+      const originalSrcs: string[] = [];
+      const tasks: Promise<void>[] = [];
+
+      // 2. 각 이미지를 fetch해서 Base64로 변환 후 src 교체 (모바일 브라우저용 꼼수)
+      imgs.forEach((img, i) => {
+        originalSrcs[i] = img.src; // 원본 주소 백업
+        
+        // 이미 base64거나 로컬호스트 등은 패스할 수도 있지만, 로컬 파일도 확실하게 하기 위해 변환 시도
+        if (img.src && !img.src.startsWith('data:')) {
+            const task = async () => {
+                const base64 = await localImageToBase64(img.src);
+                if (base64) img.src = base64 as string;
+            };
+            tasks.push(task());
+        }
+      });
+
+      // 3. 변환이 다 끝날 때까지 대기
+      await Promise.all(tasks);
+
+      // 4. 아주 짧은 렌더링 대기 (브라우저가 Base64를 그릴 시간)
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 5. 캡처 수행
       const dataUrl = await htmlToImage.toPng(cardRef.current, { 
         backgroundColor: '#020617', 
         pixelRatio: 3, 
         cacheBust: true,
+        skipAutoScale: true
       });
 
+      // 6. 공유 또는 다운로드
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
           const file = new File([blob], `협곡평점.png`, { type: 'image/png' });
           if (navigator.canShare && navigator.canShare({ files: [file] })) try { await navigator.share({ files: [file], title: '협곡평점.GG' }); } catch (e) {}
           else { const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click(); }
       } else { const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click(); }
-    } catch(err) { alert("이미지 저장 실패"); } finally {
+      
+      // 7. 이미지 원상 복구
+      imgs.forEach((img, i) => {
+         if (originalSrcs[i]) img.src = originalSrcs[i];
+      });
+
+    } catch(err) { 
+        console.error(err);
+        alert("이미지 저장 실패"); 
+    } finally {
       cardRef.current.classList.remove('download-mode');
     }
   };
@@ -385,6 +441,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             
+            {/* ⭐ 로컬 이미지 태그 (Home) */}
             <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
                 <img 
                     src={`/teams/${homeCode}.png`} 
@@ -412,6 +469,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             
+            {/* ⭐ 로컬 이미지 태그 (Away) */}
             <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
                 <img 
                     src={`/teams/${awayCode}.png`} 
