@@ -279,8 +279,9 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
   const [showTooltip, setShowTooltip] = useState(false);
   const [currentStats, setCurrentStats] = useState(match.stats || {});
   
-  const homeCode = match.home.code || match.home.name;
-  const awayCode = match.away.code || match.away.name;
+  // 공백 제거 및 안전 처리
+  const homeCode = (match.home.code || match.home.name).trim();
+  const awayCode = (match.away.code || match.away.name).trim();
 
   useEffect(() => { onEditingStateChange(isEditing); }, [isEditing, onEditingStateChange]);
   useEffect(() => { if (match.stats) setCurrentStats(match.stats); }, [match.stats]);
@@ -410,34 +411,56 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
 
   const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
 
+  // 모바일 캡처 버그 수정 (srcset 제거 & 대기)
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
     cardRef.current.classList.add('download-mode'); 
+    
     try {
       const imgs = cardRef.current.querySelectorAll('img');
       const originalSrcs: string[] = [];
+      const originalSrcsets: string[] = [];
       const tasks: Promise<void>[] = [];
+
       imgs.forEach((img, i) => {
         originalSrcs[i] = img.src; 
+        originalSrcsets[i] = img.srcset; 
+
         if (img.src && !img.src.startsWith('data:')) {
             const task = async () => {
                 const base64 = await localImageToBase64(img.src);
-                if (base64) img.src = base64 as string;
+                if (base64) {
+                    img.srcset = ''; 
+                    img.src = base64 as string;
+                }
             };
             tasks.push(task());
         }
       });
+
       await Promise.all(tasks);
-      await new Promise(resolve => setTimeout(resolve, 50));
-      const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 3, cacheBust: true, skipAutoScale: true });
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const dataUrl = await htmlToImage.toPng(cardRef.current, { 
+          backgroundColor: '#020617', 
+          pixelRatio: 3, 
+          cacheBust: true, 
+          skipAutoScale: true 
+      });
+
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
           const file = new File([blob], `협곡평점.png`, { type: 'image/png' });
           if (navigator.canShare && navigator.canShare({ files: [file] })) try { await navigator.share({ files: [file], title: '협곡평점.GG' }); } catch (e) {}
           else { const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click(); }
       } else { const link = document.createElement('a'); link.download = `rating_${match.id}.png`; link.href = dataUrl; link.click(); }
-      imgs.forEach((img, i) => { if (originalSrcs[i]) img.src = originalSrcs[i]; });
+      
+      imgs.forEach((img, i) => { 
+          if (originalSrcs[i]) img.src = originalSrcs[i]; 
+          if (originalSrcsets[i]) img.srcset = originalSrcsets[i];
+      });
+
     } catch(err) { console.error(err); alert("이미지 저장 실패"); } finally {
       cardRef.current.classList.remove('download-mode');
     }
@@ -467,7 +490,15 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
             </div>
             
             <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
-                <img src={`/teams/${homeCode}.png`} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} className="w-full h-full object-contain drop-shadow-xl" alt={match.home.name} />
+                <img 
+                    src={`/teams/${homeCode}.png`} 
+                    onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                    }}
+                    className="w-full h-full object-contain drop-shadow-xl" 
+                    alt={match.home.name}
+                />
                 <span className="hidden font-black italic text-xl">{homeCode}</span>
             </div>
 
@@ -486,7 +517,15 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
             </div>
             
             <div className="w-16 h-16 flex items-center justify-center team-logo-img transition-all">
-                <img src={`/teams/${awayCode}.png`} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} className="w-full h-full object-contain drop-shadow-xl" alt={match.away.name} />
+                <img 
+                    src={`/teams/${awayCode}.png`} 
+                    onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                    }}
+                    className="w-full h-full object-contain drop-shadow-xl" 
+                    alt={match.away.name}
+                />
                 <span className="hidden font-black italic text-xl">{awayCode}</span>
             </div>
 
@@ -499,16 +538,16 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
 
       <AnimatePresence>
         {isOpen && (
-          // ⭐ [핵심 1] layout 속성을 제거하여 부모가 자식을 찌그러뜨리는 현상 원천 봉쇄
           <motion.div 
             initial={{ height: 0, opacity: 0 }} 
             animate={{ height: 'auto', opacity: 1 }} 
             exit={{ height: 0, opacity: 0 }} 
-            transition={{ duration: 0.3, ease: "easeOut" }} // 일반 transition 사용
+            transition={{ duration: 0.3, ease: "easeOut" }} 
             className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} 
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-4 space-y-2">
+            {/* ⭐ 하이브리드 간격: 수정(space-y-4) vs 보기(space-y-1.5) */}
+            <div className={`p-5 ${isEditing ? 'space-y-4' : 'space-y-1.5'}`}> 
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx], ap = awayRoster[idx];
                 const hScore = isEditing ? (myRatings[hp] ?? 0) : (averages[hp] ?? 0);
@@ -527,12 +566,15 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                 }
 
                 return (
-                  <div key={pos} className="flex flex-col gap-0">
-                    <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0">
+                  <div key={pos} className="flex flex-col gap-0 mb-1">
+                    {/* 텍스트 간격: 수정(mb-1.5) vs 보기(mb-0) */}
+                    <div className={`flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider ${isEditing ? 'mb-1.5' : 'mb-0'} relative z-10 leading-none`}>
                       <span className="truncate w-24">{hName}</span>
                       <span className="truncate w-24 text-right">{aName}</span>
                     </div>
-                    <motion.div layout className="flex items-center gap-3 h-10 relative">
+                    
+                    {/* 바 높이: 수정(h-9) vs 보기(h-8) & gap-2 고정 */}
+                    <motion.div layout className={`flex items-center gap-2 ${isEditing ? 'h-9' : 'h-8'} relative`}>
                       {isEditing ? <InteractiveBar score={hScore} align="left" color={hColor} onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={hColor} />}
                       <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
                       {isEditing ? <InteractiveBar score={aScore} align="right" color={aColor} onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={aColor} />}
@@ -541,15 +583,13 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                 );
               })}
               <div className="pt-2 pb-2">
-                {/* ⭐ [핵심 2] gap을 1로 최소화 */}
-                <div className="flex flex-col items-center gap-1">
-                   <div className="flex items-center gap-2">
+                <div className="flex flex-col items-center gap-0">
+                   <div className="flex items-center gap-2 mb-1"> 
                      <span className="text-xs font-black text-amber-400 tracking-wider whitespace-nowrap">⚡ 도파민 지수</span>
                      <span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)} <span className="text-[10px] text-slate-500 not-italic">/ 5.0</span></span>
                      <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
                    </div>
                    
-                   {/* ⭐ [핵심 3] marginTop 제거, padding으로 간격 대체 */}
                    <AnimatePresence>
                      {showTooltip && (
                        <motion.div
@@ -557,7 +597,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                          animate={{ height: "auto", opacity: 1 }} 
                          exit={{ height: 0, opacity: 0 }}
                          transition={{ duration: 0.2, ease: "easeOut" }}
-                         className="overflow-hidden bg-slate-800/50 border border-slate-700/50 rounded-lg mx-4"
+                         className="overflow-hidden bg-slate-800/50 border border-slate-700/50 rounded-lg mx-4 mb-2 w-full max-w-[280px]"
                        >
                           <div className="p-3 text-[10px] text-slate-300 leading-relaxed text-center">
                             내가 응원하는 팀의 성패나 경기력과는 관계없이,<br/>
@@ -606,6 +646,30 @@ function InteractiveBar({ score, align, color, onChange }: any) {
   return ( <div ref={barRef} onMouseDown={onStart} onTouchStart={onStart} onTouchMove={onTouchMove} className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`} style={{ touchAction: 'none' }}> <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'red' ? 'bg-red-500' : color === 'blue' ? 'bg-blue-500' : color === 'cyan' ? 'bg-cyan-400' : 'bg-slate-600'} opacity-80 pointer-events-none`} /> <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none drop-shadow-md">{score.toFixed(1)}</span> </div> );
 }
 
-function ResultBar({ score, align, theme }: any) { const hasData = score > 0; let barColor = 'bg-slate-600'; if (theme === 'red') barColor = 'bg-red-500'; else if (theme === 'blue') barColor = 'bg-blue-500'; return ( <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}`}> <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}> <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? barColor : 'bg-transparent'}`} /> </div> <div className={`w-10 h-6 flex items-center justify-center rounded-md ${hasData ? (theme === 'red' ? 'bg-red-500' : theme === 'blue' ? 'bg-blue-600' : 'bg-slate-700') : 'bg-slate-800'} shadow-md`}> <span className={`text-[11px] font-bold leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span> </div> </div> ); }
+// ⭐ [수정] ResultBar 두께 h-2, 뱃지 너비 w-8, 색상 투명도 /90
+function ResultBar({ score, align, theme }: any) { 
+  const hasData = score > 0; 
+  let barColor = 'bg-slate-600'; 
+  if (theme === 'red') barColor = 'bg-red-500/90'; 
+  else if (theme === 'blue') barColor = 'bg-blue-500/90'; 
+  
+  let badgeColor = 'bg-slate-800/80';
+  if (hasData) {
+      if (theme === 'red') badgeColor = 'bg-red-500/90';
+      else if (theme === 'blue') badgeColor = 'bg-blue-600/90';
+      else badgeColor = 'bg-slate-700/80';
+  }
+
+  return ( 
+    <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}`}> 
+      <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}> 
+        <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? barColor : 'bg-transparent'}`} /> 
+      </div> 
+      <div className={`w-8 h-6 flex items-center justify-center rounded-md ${badgeColor} shadow-md`}> 
+        <span className={`text-[10px] font-bold leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span> 
+      </div> 
+    </div> 
+  ); 
+}
 
 function DopamineRating({ score, isEditing, onChange }: any) { const starScore = score / 2; const lastHapticRef = useRef(0); const triggerHaptic = () => { const now = Date.now(); if (now - lastHapticRef.current > 50) { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(5); lastHapticRef.current = now; } }; const handleClick = (e: any, val: number) => { e.stopPropagation(); if (isEditing) { onChange(val); triggerHaptic(); } }; return ( <div className="flex flex-col items-center" onTouchStart={(e) => isEditing && e.stopPropagation()} onTouchEnd={(e) => isEditing && e.stopPropagation()}> <div className="flex gap-1.5"> {[1, 2, 3, 4, 5].map((idx) => ( <div key={idx} className="relative w-6 h-6 cursor-pointer group" onClick={(e) => handleClick(e, idx * 2)}> <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> {starScore >= idx && <svg viewBox="0 0 24 24" className="absolute top-0 left-0 w-full h-full text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>} {starScore >= idx - 0.5 && starScore < idx && <div className="absolute top-0 left-0 w-1/2 h-full overflow-hidden"><svg viewBox="0 0 24 24" className="w-6 h-6 text-amber-400 fill-current drop-shadow-sm"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div>} </div> ))} </div> </div> ); }
