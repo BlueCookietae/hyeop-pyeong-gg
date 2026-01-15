@@ -79,6 +79,31 @@ const getKSTDate = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+// --- 애니메이션 유틸 (Ease-Out Quart) ---
+const easeOutQuart = (t: number, b: number, c: number, d: number) => {
+  t /= d;
+  t--;
+  return -c * (t * t * t * t - 1) + b;
+};
+
+const animateScrollTo = (to: number, duration: number = 800) => {
+  const start = window.scrollY;
+  const change = to - start;
+  const startTime = performance.now();
+
+  const animateScroll = (currentTime: number) => {
+    const timeElapsed = currentTime - startTime;
+    if (timeElapsed < duration) {
+      const nextScrollY = easeOutQuart(timeElapsed, start, change, duration);
+      window.scrollTo(0, nextScrollY);
+      requestAnimationFrame(animateScroll);
+    } else {
+      window.scrollTo(0, to);
+    }
+  };
+  requestAnimationFrame(animateScroll);
+};
+
 // --- 메인 컴포넌트 ---
 export default function HomeView({ initialMatches, initialRosters }: { initialMatches: any[], initialRosters: any }) {
   const router = useRouter();
@@ -93,7 +118,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
   
-  // ⭐ [UX 3] 뒤로가기 시 "순간이동 튕김"을 숨기기 위한 투명망토 상태
   const targetId = searchParams.get('expanded');
   const [isRestoring, setIsRestoring] = useState(!!targetId);
 
@@ -130,7 +154,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     }
   };
 
-  // URL 동기화
   useEffect(() => {
     if (targetId) {
         if (allMatches.length > 0) {
@@ -146,7 +169,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
             }
         }
     } else {
-        // 타겟 ID가 없으면 복구 모드 즉시 해제
         setIsRestoring(false);
     }
   }, [targetId, allMatches]);
@@ -211,13 +233,12 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 
       <div className="max-w-md mx-auto p-4 min-h-[50vh]" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <AnimatePresence mode='wait'>
-          {/* ⭐ [UX 3] isRestoring(복구중)일 땐 opacity 0으로 숨김 -> 복구완료 시 부드럽게 등장 */}
           <motion.div 
             key={currentTab} 
             initial={{ x: 20, opacity: 0 }} 
             animate={{ x: 0, opacity: isRestoring ? 0 : 1 }} 
             exit={{ x: -20, opacity: 0 }} 
-            transition={{ duration: 0.3 }} // 등장 속도
+            transition={{ duration: 0.3 }} 
             className="space-y-6"
           >
             {displayMatches.length === 0 ? (
@@ -235,7 +256,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                   lastClickedId={lastClickedId}
                   onToggle={(isOpenNow: boolean) => toggleCard(match.id, isOpenNow)}
                   onEditingStateChange={(editing: boolean) => setIsAnyEditing(editing)}
-                  // ⭐ 복구 완료 신호를 보내는 콜백 전달
                   onRestoreComplete={() => setIsRestoring(false)}
                 />
               ))
@@ -248,10 +268,11 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   );
 }
 
-// ⭐ onRestoreComplete prop 추가
 function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked, lastClickedId, onToggle, onEditingStateChange, onRestoreComplete }: any) {
   const router = useRouter();
   const cardRef = useRef<HTMLDivElement>(null);
+  const hasScrolledRef = useRef(false);
+
   const [isEditing, setIsEditing] = useState(false);
   const [hasParticipated, setHasParticipated] = useState(false); 
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
@@ -263,6 +284,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
 
   useEffect(() => { onEditingStateChange(isEditing); }, [isEditing, onEditingStateChange]);
   useEffect(() => { if (match.stats) setCurrentStats(match.stats); }, [match.stats]);
+
+  useEffect(() => {
+    if (!isOpen) { hasScrolledRef.current = false; }
+  }, [isOpen]);
 
   const averages: Record<string, number> = {};
   Object.keys(currentStats).forEach(key => {
@@ -310,26 +335,28 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
       };
       fetchMyRatings(); 
       
-      setTimeout(() => {
-        if (!cardRef.current) return;
-        const rect = cardRef.current.getBoundingClientRect();
-        
-        if (isClicked) {
-            const y = rect.top + window.scrollY - 79;
-            window.scrollTo({ top: y, behavior: 'smooth' });
-        }
-        else if (isTarget && !lastClickedId) {
-            // ⭐ [UX 2] 뒤로가기 시 무조건 79px 오프셋 적용 (조건문 제거)
-            const y = rect.top + window.scrollY - 79;
-            window.scrollTo({ top: y, behavior: 'auto' });
+      if (!hasScrolledRef.current) {
+          setTimeout(() => {
+            if (!cardRef.current) return;
+            const rect = cardRef.current.getBoundingClientRect();
             
-            // ⭐ [UX 3] 스크롤 이동 끝났으니 이제 화면 보여줘라! (Fade In)
-            onRestoreComplete && onRestoreComplete();
-        }
-      }, 300);
+            if (isClicked) {
+                const y = rect.top + window.scrollY - 79;
+                animateScrollTo(y, 800);
+                hasScrolledRef.current = true; 
+            }
+            else if (isTarget && !lastClickedId) {
+                const y = rect.top + window.scrollY - 79; 
+                window.scrollTo({ top: y, behavior: 'auto' });
+                onRestoreComplete && onRestoreComplete();
+                hasScrolledRef.current = true; 
+            }
+          }, 300);
+      }
     } 
     else { setIsEditing(false); setShowTooltip(false); }
-  }, [isOpen, isTarget, isClicked, lastClickedId, homeRoster, awayRoster, match.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isTarget, isClicked, lastClickedId, match.id]); 
 
   const handleCardClick = () => { 
     if (!isStarted) { alert("경기가 시작되면 평점이 오픈돼요!"); return; }
@@ -472,13 +499,12 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
 
       <AnimatePresence>
         {isOpen && (
-          // ⭐ [UX 1] 스프링(spring) 대신 Tween + easeOut을 써서 "띠용" 제거!
+          // ⭐ [핵심 1] layout 속성을 제거하여 부모가 자식을 찌그러뜨리는 현상 원천 봉쇄
           <motion.div 
             initial={{ height: 0, opacity: 0 }} 
             animate={{ height: 'auto', opacity: 1 }} 
             exit={{ height: 0, opacity: 0 }} 
-            layout
-            transition={{ layout: { duration: 0.3, type: "tween", ease: "easeOut" } }}
+            transition={{ duration: 0.3, ease: "easeOut" }} // 일반 transition 사용
             className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} 
             onClick={(e) => e.stopPropagation()}
           >
@@ -515,18 +541,21 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                 );
               })}
               <div className="pt-2 pb-2">
+                {/* ⭐ [핵심 2] gap을 1로 최소화 */}
                 <div className="flex flex-col items-center gap-1">
                    <div className="flex items-center gap-2">
                      <span className="text-xs font-black text-amber-400 tracking-wider whitespace-nowrap">⚡ 도파민 지수</span>
                      <span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)} <span className="text-[10px] text-slate-500 not-italic">/ 5.0</span></span>
                      <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
                    </div>
+                   
+                   {/* ⭐ [핵심 3] marginTop 제거, padding으로 간격 대체 */}
                    <AnimatePresence>
                      {showTooltip && (
                        <motion.div
-                         initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                         animate={{ height: "auto", opacity: 1, marginTop: 8 }} 
-                         exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                         initial={{ height: 0, opacity: 0 }}
+                         animate={{ height: "auto", opacity: 1 }} 
+                         exit={{ height: 0, opacity: 0 }}
                          transition={{ duration: 0.2, ease: "easeOut" }}
                          className="overflow-hidden bg-slate-800/50 border border-slate-700/50 rounded-lg mx-4"
                        >
@@ -537,6 +566,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                        </motion.div>
                      )}
                    </AnimatePresence>
+
                    <DopamineRating score={funScore} isEditing={isEditing} onChange={(v:number) => handleRatingChange(FUN_KEY, v)} />
                 </div>
               </div>
