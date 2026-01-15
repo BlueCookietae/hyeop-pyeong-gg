@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth, db } from "@/lib/firebase"; 
 import { doc, getDoc, collection, query, where, getDocs, setDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, orderBy, limit, startAfter } from "firebase/firestore";
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import Footer from '@/components/Footer';
 
 const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
@@ -48,7 +48,7 @@ export default function MatchDetailView({ matchData, initialRosters, initialAvgR
   }, [matchId]);
 
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }, [activePosIndex, selectedTeamSide]);
 
   const isFinished = matchData?.status === 'FINISHED';
@@ -175,7 +175,6 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
   const [lastVisible, setLastVisible] = useState<any>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  // 초기 데이터가 있으면 로딩 상태 아님, 없으면 로딩
   const [loadingComments, setLoadingComments] = useState(initialComments.length === 0);
   
   const user = auth.currentUser;
@@ -190,12 +189,21 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
     return visible + masked;
   };
 
+  // ⭐ [핵심 수정] ID 생성 시 슬래시(/) 제거 함수
+  const getSafeDocId = (uid: string) => {
+    // 슬래시(/)를 언더바(_) 또는 하이픈(-)으로 치환해서 경로 오류 방지
+    const safePlayerName = playerName.replace(/\//g, '-');
+    return `${matchId}_${safePlayerName}_${uid}`;
+  };
+
   useEffect(() => {
     // 1. 내 댓글 가져오기
     const fetchMy = async () => {
         if (!user) return;
         try {
-          const snap = await getDoc(doc(db, "matchComments", `${matchId}_${playerName}_${user.uid}`));
+          // ⭐ 수정된 ID 생성 함수 사용
+          const docRef = doc(db, "matchComments", getSafeDocId(user.uid));
+          const snap = await getDoc(docRef);
           const snapData = snap.data(); 
           if (snap.exists() && snapData) {
             const myData = { id: snap.id, ...snapData };
@@ -228,15 +236,12 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
 
     if (!loadingComments) return; // 이미 데이터가 있으면 패스
 
-    // 즉시 확인
     if (checkStreamedData()) return;
 
-    // 약간의 딜레이를 두고 폴링 (네트워크 속도 차이 대비)
     const timer = setInterval(() => {
         if (checkStreamedData()) clearInterval(timer);
     }, 100);
 
-    // 3초가 지나도 스트리밍 데이터가 없으면 직접 fetch (Fallback)
     const fallbackTimer = setTimeout(async () => {
         clearInterval(timer);
         if (comments.length === 0) {
@@ -294,7 +299,8 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
     
     setIsSubmitting(true);
     try {
-      const commentId = `${matchId}_${playerName}_${user.uid}`;
+      // ⭐ 수정된 ID 생성 함수 사용
+      const commentId = getSafeDocId(user.uid);
       const newComment = {
         userId: user.uid, 
         userName: user.email?.split('@')[0] || "Unknown", 
@@ -306,18 +312,23 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
         likedBy: myComment?.likedBy || [], 
         createdAt: serverTimestamp()
       };
+      
       await setDoc(doc(db, "matchComments", commentId), newComment);
       await fetchInitialComments(); 
       const snap = await getDoc(doc(db, "matchComments", commentId));
       if (snap.exists()) setMyComment({ id: snap.id, ...snap.data() });
       alert(myComment ? "수정되었습니다!" : "등록되었습니다!");
-    } catch (e) { alert("저장 실패"); } finally { setIsSubmitting(false); }
+    } catch (e) { 
+        console.error(e);
+        alert("저장 실패"); 
+    } finally { setIsSubmitting(false); }
   };
 
   const handleDelete = async () => {
     if (!confirm("삭제하시겠습니까?")) return;
     if (!myComment) return;
     try { 
+      // myComment.id는 이미 안전한 ID이므로 그대로 사용 가능
       await deleteDoc(doc(db, "matchComments", myComment.id)); 
       setMyComment(null); 
       setInputVal("");
@@ -369,7 +380,6 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
         </div>
       ) : (
         <>
-          {/* 1. 베스트 댓글 */}
           {best3.length > 0 && (
              <div className="space-y-4">
                 {best3.map(c => (
@@ -386,7 +396,6 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
              </div>
           )}
 
-          {/* 2. 댓글 작성창 */}
           <div className={`border p-4 rounded-2xl shadow-lg transition-all ${hasRated ? 'bg-slate-900 border-slate-800' : 'bg-slate-900/50 border-slate-800/50'}`}>
             <label className="text-xs font-bold text-slate-500 mb-2 block">
               {myComment ? '내 코멘트 수정하기' : '한줄평 남기기 (100자 이내)'}
@@ -423,7 +432,6 @@ function CommentSection({ matchId, playerName, initialComments, userRating, onGo
             </div>
           </div>
 
-          {/* 3. 나머지 댓글 목록 */}
           <div className="space-y-4 pb-10">
             {rest.map(c => (
               <CommentItem 
