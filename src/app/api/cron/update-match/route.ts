@@ -8,40 +8,60 @@ export async function GET(request: Request) {
   if (!PANDASCORE_TOKEN) return NextResponse.json({ error: "Missing Token" }, { status: 500 });
 
   try {
-    // 1. 날짜 및 시간 계산 (KST)
+    // 1. 날짜 계산 (어제 & 오늘 구하기)
     const kstOffset = 9 * 60 * 60 * 1000;
     const now = new Date();
     const kstNow = new Date(now.getTime() + kstOffset);
+    
+    // 오늘
     const todayStr = kstNow.toISOString().split('T')[0];
-    const currentMonthStr = todayStr.substring(0, 7); // YYYY-MM
+    const currentMonthStr = todayStr.substring(0, 7);
 
-    // 2. [모니터링용] 시스템 로그 가져오기 & 카운터 리셋 로직
+    // ⭐ 어제 (24시간 전)
+    const yesterdayDate = new Date(kstNow);
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
+
+    // 2. 시스템 로그 가져오기
     const logRef = doc(db, 'system', 'pandascore');
     const logSnap = await getDoc(logRef);
-    let logData = logSnap.exists() ? logSnap.data() : { todayCalls: 0, monthlyCalls: 0, lastRun: null, lastCallDate: '' };
+    const dbData = logSnap.exists() ? logSnap.data() : {};
+
+    const logData = {
+        todayCalls: dbData.todayCalls || 0,
+        monthlyCalls: dbData.monthlyCalls || 0,
+        lastRun: dbData.lastRun || null,
+        lastCallDate: dbData.lastCallDate || ''
+    };
 
     if (logData.lastCallDate !== todayStr) {
-        logData.todayCalls = 0; // 날짜 변경 시 일간 초기화
+        logData.todayCalls = 0; 
         if (!logData.lastCallDate.startsWith(currentMonthStr)) {
-            logData.monthlyCalls = 0; // 월 변경 시 월간 초기화
+            logData.monthlyCalls = 0; 
         }
     }
 
-    // 3. 업데이트 대상 경기 찾기 (오늘 이후 경기 중 끝나지 않은 것)
-    const q = query(collection(db, 'matches'), where('date', '>=', todayStr));
+    // 3. ⭐ [핵심 변경] "어제"부터의 경기를 가져옵니다.
+    // 어제 경기가 아직 LIVE 상태로 멈춰있을 수 있으니까요.
+    const q = query(collection(db, 'matches'), where('date', '>=', yesterdayStr));
     const snap = await getDocs(q);
     
-    // 이미 끝난 경기는 제외 (쿼터 절약)
+    // 이미 끝난(FINISHED) 경기는 제외하되, 
+    // 혹시 결과가 잘못돼서 다시 돌리는 경우를 대비해 필요하다면 이 필터를 뺄 수도 있습니다.
+    // 지금은 쿼터 절약을 위해 유지합니다.
     const activeMatches = snap.docs.filter(doc => doc.data().status !== 'FINISHED');
 
     let apiCalled = false;
     let updatedCount = 0;
 
-    // 4. 대상 경기가 있을 때만 PandaScore 호출
+    // 4. API 호출
     if (activeMatches.length > 0) {
-        console.log("🐼 Calling PandaScore API...");
+        console.log(`🐼 Fetching matches from ${yesterdayStr} to ${todayStr}...`);
+        
+        // ⭐ [핵심 변경] PandaScore에게 "어제부터 오늘까지"의 데이터를 달라고 요청합니다.
+        // range[begin_at]을 사용합니다.
         const response = await fetch(
-            `https://api.pandascore.co/lol/matches?filter[begin_at]=${todayStr}&token=${PANDASCORE_TOKEN}`
+            `https://api.pandascore.co/lol/matches?range[begin_at]=${yesterdayStr}T00:00:00Z,${todayStr}T23:59:59Z&token=${PANDASCORE_TOKEN}`
         );
         
         if (!response.ok) throw new Error(`PandaScore API Failed: ${response.statusText}`);
@@ -49,23 +69,16 @@ export async function GET(request: Request) {
         const pandaData = await response.json();
         apiCalled = true;
 
-        // 5. Code(Acronym) 기반 데이터 매칭 및 업데이트
         for (const myMatch of activeMatches) {
             const myData = myMatch.data();
-            
-            // DB에 저장된 code 사용 (없으면 name으로 fallback)
             const homeCode = myData.home.code || myData.home.name;
             const awayCode = myData.away.code || myData.away.name;
 
-            // PandaScore에서 팀 찾기 (acronym == code)
             const foundPandaMatch = pandaData.find((p: any) => {
                 const teamA = p.opponents[0]?.opponent?.acronym;
                 const teamB = p.opponents[1]?.opponent?.acronym;
-                
-                // 순서 상관없이 매칭 확인 (T1 vs GEN 혹은 GEN vs T1)
                 const hasHome = teamA === homeCode || teamB === homeCode;
                 const hasAway = teamA === awayCode || teamB === awayCode;
-                
                 return hasHome && hasAway;
             });
 
@@ -77,7 +90,6 @@ export async function GET(request: Request) {
                 let realHomeScore = 0;
                 let realAwayScore = 0;
 
-                // 우리 DB의 Home이 PandaScore의 첫 번째 팀인지 확인하여 점수 배정
                 if (teamA_Code === homeCode) {
                     realHomeScore = teamA_Res.score;
                     realAwayScore = teamB_Res.score;
@@ -86,9 +98,11 @@ export async function GET(request: Request) {
                     realAwayScore = teamA_Res.score;
                 }
 
-                const newStatus = foundPandaMatch.status === 'finished' ? 'FINISHED' : 'LIVE';
+                // PandaScore status: 'not_started', 'running', 'finished'
+                let newStatus = 'SCHEDULED';
+                if (foundPandaMatch.status === 'running') newStatus = 'LIVE';
+                if (foundPandaMatch.status === 'finished') newStatus = 'FINISHED';
 
-                // 값이 다를 때만 DB 업데이트 (쓰기 비용 절약)
                 if (
                     myData.home.score !== realHomeScore || 
                     myData.away.score !== realAwayScore || 
@@ -105,7 +119,7 @@ export async function GET(request: Request) {
         }
     }
 
-    // 6. [모니터링용] 시스템 로그 업데이트 (DB 기록)
+    // 5. 로그 저장
     if (apiCalled) {
         logData.todayCalls += 1;
         logData.monthlyCalls += 1;
@@ -115,7 +129,7 @@ export async function GET(request: Request) {
         ...logData,
         lastRun: kstNow.toISOString(),
         lastCallDate: todayStr,
-        lastResult: apiCalled ? `Success (${updatedCount} updated)` : 'Skipped (No matches)',
+        lastResult: apiCalled ? `Success (${updatedCount} updated)` : 'Skipped (No active matches)',
         status: 'OK'
     });
 
@@ -127,7 +141,6 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
-    // 에러 발생 시에도 로그 남김 (그래야 관리자 페이지에서 빨간불 확인 가능)
     await setDoc(doc(db, 'system', 'pandascore'), { 
         lastRun: new Date().toISOString(), 
         status: 'ERROR', 

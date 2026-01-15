@@ -109,19 +109,35 @@ export default function AdminPage() {
     }
   };
 
-  const handleSyncLCK = async () => {
+const handleSyncLCK = async () => {
     if (!confirm("LCK 전체 일정을 다시 불러오시겠습니까? (Riot API)")) return;
     setIsLckSyncing(true);
     try {
       const res = await fetch('/api/lck');
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+
+      // ⭐ [수정] 에러 체크 강화
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `서버 에러 (${res.status})`);
+      }
+      
+      // ⭐ [수정] matches가 진짜 배열인지 확인
+      if (!Array.isArray(data.matches)) {
+        throw new Error("데이터 형식이 올바르지 않습니다. (matches is not array)");
+      }
+
       for (const match of data.matches) {
         await setDoc(doc(db, "matches", match.id), { ...match, createdAt: serverTimestamp() }, { merge: true });
       }
+      
       alert(`성공! ${data.count}개 경기 일정 로드 완료`);
       fetchInfoFromMatches();
-    } catch (e: any) { alert(e.message); } finally { setIsLckSyncing(false); }
+    } catch (e: any) { 
+      console.error(e); // 콘솔에 자세한 에러 출력
+      alert(`실패: ${e.message}`); 
+    } finally { 
+      setIsLckSyncing(false); 
+    }
   };
 
   const handleSaveTeam = async (e: React.FormEvent) => {
