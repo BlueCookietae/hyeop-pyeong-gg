@@ -5,24 +5,20 @@ import { collection, query, where, getDocs, updateDoc, doc, getDoc, setDoc } fro
 const PANDASCORE_TOKEN = process.env.PANDASCORE_TOKEN;
 
 export async function GET(request: Request) {
-  if (!PANDASCORE_TOKEN) return NextResponse.json({ error: "Missing Token" }, { status: 500 });
+  if (!PANDASCORE_TOKEN) return NextResponse.json({ error: "Missing PandaScore Token" }, { status: 500 });
 
   try {
-    // 1. 날짜 계산 (어제 & 오늘 구하기)
     const kstOffset = 9 * 60 * 60 * 1000;
     const now = new Date();
     const kstNow = new Date(now.getTime() + kstOffset);
     
-    // 오늘
     const todayStr = kstNow.toISOString().split('T')[0];
-    const currentMonthStr = todayStr.substring(0, 7);
+    const currentMonthStr = todayStr.substring(0, 7); 
 
-    // ⭐ 어제 (24시간 전)
     const yesterdayDate = new Date(kstNow);
     yesterdayDate.setDate(yesterdayDate.getDate() - 1);
     const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
 
-    // 2. 시스템 로그 가져오기
     const logRef = doc(db, 'system', 'pandascore');
     const logSnap = await getDoc(logRef);
     const dbData = logSnap.exists() ? logSnap.data() : {};
@@ -41,25 +37,41 @@ export async function GET(request: Request) {
         }
     }
 
-    // 3. ⭐ [핵심 변경] "어제"부터의 경기를 가져옵니다.
-    // 어제 경기가 아직 LIVE 상태로 멈춰있을 수 있으니까요.
     const q = query(collection(db, 'matches'), where('date', '>=', yesterdayStr));
     const snap = await getDocs(q);
     
-    // 이미 끝난(FINISHED) 경기는 제외하되, 
-    // 혹시 결과가 잘못돼서 다시 돌리는 경우를 대비해 필요하다면 이 필터를 뺄 수도 있습니다.
-    // 지금은 쿼터 절약을 위해 유지합니다.
-    const activeMatches = snap.docs.filter(doc => doc.data().status !== 'FINISHED');
+    // ⭐ [최적화] 필터링 로직 강화
+    const activeMatches = snap.docs.filter(doc => {
+        const data = doc.data();
+        
+        // 1. 이미 끝난 건 패스
+        if (data.status === 'FINISHED') return false; 
+        
+        // 2. LIVE면 무조건 호출 (점수판 중계 중)
+        if (data.status === 'LIVE') return true;
+
+        // 3. SCHEDULED(예정) 상태일 때
+        if (data.date) {
+            const matchTime = new Date(data.date.replace(' ', 'T') + ':00'); 
+            const diffMs = matchTime.getTime() - kstNow.getTime();
+            const diffMinutes = diffMs / (1000 * 60); // 분 단위 변환
+
+            // ⭐ [핵심] 경기 시작 10분 전 ~ 이미 시간 지남(음수)일 때만 호출
+            // 예: 17:00 경기인데 지금 16:30 -> 30분 남음 -> 호출 X
+            // 예: 17:00 경기인데 지금 16:55 -> 5분 남음 -> 호출 O
+            // 예: 17:00 경기인데 지금 17:10 -> -10분 (이미 지남) -> 호출 O (상태를 LIVE로 바꿔야 하니까!)
+            if (diffMinutes <= 10) return true;
+        }
+
+        return false;
+    });
 
     let apiCalled = false;
     let updatedCount = 0;
 
-    // 4. API 호출
     if (activeMatches.length > 0) {
-        console.log(`🐼 Fetching matches from ${yesterdayStr} to ${todayStr}...`);
+        console.log(`🐼 Found ${activeMatches.length} matches needed update. Calling API...`);
         
-        // ⭐ [핵심 변경] PandaScore에게 "어제부터 오늘까지"의 데이터를 달라고 요청합니다.
-        // range[begin_at]을 사용합니다.
         const response = await fetch(
             `https://api.pandascore.co/lol/matches?range[begin_at]=${yesterdayStr}T00:00:00Z,${todayStr}T23:59:59Z&token=${PANDASCORE_TOKEN}`
         );
@@ -98,7 +110,6 @@ export async function GET(request: Request) {
                     realAwayScore = teamA_Res.score;
                 }
 
-                // PandaScore status: 'not_started', 'running', 'finished'
                 let newStatus = 'SCHEDULED';
                 if (foundPandaMatch.status === 'running') newStatus = 'LIVE';
                 if (foundPandaMatch.status === 'finished') newStatus = 'FINISHED';
@@ -117,9 +128,11 @@ export async function GET(request: Request) {
                 }
             }
         }
+    } else {
+        // 호출 안 함 로그
+        console.log("🐼 No urgent matches. Save money mode ON.");
     }
 
-    // 5. 로그 저장
     if (apiCalled) {
         logData.todayCalls += 1;
         logData.monthlyCalls += 1;
@@ -129,7 +142,9 @@ export async function GET(request: Request) {
         ...logData,
         lastRun: kstNow.toISOString(),
         lastCallDate: todayStr,
-        lastResult: apiCalled ? `Success (${updatedCount} updated)` : 'Skipped (No active matches)',
+        lastResult: apiCalled 
+            ? `Success (${updatedCount} updated)` 
+            : `Skipped (Next match > 10m away)`, // 로그 메시지 변경
         status: 'OK'
     });
 
@@ -141,6 +156,7 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
+    console.error("Cron Error:", error);
     await setDoc(doc(db, 'system', 'pandascore'), { 
         lastRun: new Date().toISOString(), 
         status: 'ERROR', 
