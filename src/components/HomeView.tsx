@@ -34,6 +34,17 @@ const dataURItoBlob = (dataURI: string) => {
   return new Blob([ab], { type: mimeString });
 };
 
+// 내부 이미지 -> Base64 변환 함수 (캡처용)
+const urlToBase64 = async (url: string) => {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+};
+
 const formatPlayerName = (fullName: string, teamName: string) => {
   if (!fullName) return '';
   return fullName.split('/').map(part => {
@@ -264,46 +275,13 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
   const [showTooltip, setShowTooltip] = useState(false);
   const [currentStats, setCurrentStats] = useState(match.stats || {});
   
+  // 팀 코드 (T1, GEN 등) 안전하게 가져오기
   const homeCode = (match.home.code || match.home.name).trim();
   const awayCode = (match.away.code || match.away.name).trim();
 
-  // ⭐ [핵심전략] 이미지를 미리 Base64로 변환해서 저장할 State
-  const [teamLogos, setTeamLogos] = useState({ home: '', away: '' });
-
-  // ⭐ [핵심전략] 컴포넌트가 뜨자마자 로고를 Fetch해서 Base64로 만듦
-  useEffect(() => {
-    const preloadLogos = async () => {
-        // 내부 API 사용 없이 직접 fetch (같은 도메인이므로 CORS 문제 없음)
-        const fetchAndConvert = async (code: string) => {
-            try {
-                // public 폴더의 이미지를 직접 가져옴
-                const res = await fetch(`/teams/${code}.png`);
-                if (!res.ok) throw new Error('Network response was not ok');
-                const blob = await res.blob();
-                
-                return new Promise<string>((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result as string);
-                    reader.readAsDataURL(blob);
-                });
-            } catch (e) {
-                // 실패하면 원본 경로라도 반환 (최소한 안 깨지게)
-                return `/teams/${code}.png`;
-            }
-        };
-
-        const [h, a] = await Promise.all([
-            fetchAndConvert(homeCode),
-            fetchAndConvert(awayCode)
-        ]);
-        
-        // 변환된 Base64 데이터를 State에 저장 -> 렌더링에 사용
-        setTeamLogos({ home: h, away: a });
-    };
-
-    preloadLogos();
-  }, [homeCode, awayCode]);
-
+  // 에러 상태 (텍스트 대체용)
+  const [isHomeLogoError, setIsHomeLogoError] = useState(false);
+  const [isAwayLogoError, setIsAwayLogoError] = useState(false);
 
   useEffect(() => { onEditingStateChange(isEditing); }, [isEditing, onEditingStateChange]);
   useEffect(() => { if (match.stats) setCurrentStats(match.stats); }, [match.stats]);
@@ -431,9 +409,12 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
     } catch (e: any) { alert(`제출 실패: ${e.message}`); }
   };
 
-  const handleRatingChange = (name: string, val: number) => { setMyRatings(prev => ({ ...prev, [name]: val })); };
+  // ⭐ [누락 복구] handleRatingChange 함수 복구 및 정의
+  const handleRatingChange = (name: string, val: number) => { 
+      setMyRatings(prev => ({ ...prev, [name]: val })); 
+  };
 
-  // ⭐ 로고 고정 + 링크 공유 (즉시 캡처)
+  // ⭐ 캡처 핸들러: 클릭 시 내부 변환 후 공유
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
@@ -441,15 +422,35 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
     cardRef.current.classList.add('download-mode'); 
     
     try {
-      // 1. 이미지가 이미 Base64로 렌더링되어 있으므로 대기 없이 즉시 캡처
+      const imgs = cardRef.current.querySelectorAll('img');
+      const originalSrcs: string[] = [];
+      const tasks: Promise<void>[] = [];
+
+      imgs.forEach((img, i) => {
+        originalSrcs[i] = img.src; 
+        
+        // 로컬 이미지면 직접 fetch해서 Base64로 교체
+        if (img.src && !img.src.startsWith('data:')) {
+            const task = async () => {
+                try {
+                    const base64 = await urlToBase64(img.src) as string;
+                    if (base64) img.src = base64; 
+                } catch(err) { console.error("Img convert fail", err); }
+            };
+            tasks.push(task());
+        }
+      });
+
+      await Promise.all(tasks);
+      await new Promise(resolve => setTimeout(resolve, 500)); // 렌더링 안정화
+
       const dataUrl = await htmlToImage.toPng(cardRef.current, { 
           backgroundColor: '#020617', 
           pixelRatio: 3, 
-          cacheBust: false,  // ⭐ Base64 깨짐 방지
+          cacheBust: false, 
           skipAutoScale: true 
       });
 
-      // 2. 공유
       if (navigator.share) {
           const blob = dataURItoBlob(dataUrl);
           const file = new File([blob], `rating_${match.id}.png`, { type: 'image/png' });
@@ -478,6 +479,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
           link.href = dataUrl; 
           link.click(); 
       }
+
+      // 원상 복구
+      imgs.forEach((img, i) => {
+          if (originalSrcs[i]) img.src = originalSrcs[i];
+      });
 
     } catch(err) { 
         console.error(err); 
@@ -509,25 +515,29 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
       <div className="p-8 pt-12 pb-4 text-center">
         <div className="flex justify-between items-start">
           <div className="flex-1 flex flex-col items-center gap-1">
-            <div className="h-6 mb-1 flex items-end">
+            <div className="h-6 mb-2 flex items-center justify-center">
               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             
             <div className="w-16 h-16 flex items-center justify-center transition-all">
-                {/* ⭐ [HOME] 변환된 Base64(teamLogos.home)를 우선 사용, 없으면 원본 */}
-                <img 
-                    src={teamLogos.home || `/teams/${homeCode}.png`} 
-                    onError={(e) => {
-                        // 에러나면 그냥 숨김처리 (텍스트 대체 안함)
-                        (e.target as HTMLImageElement).style.opacity = '0';
-                    }}
-                    className="w-full h-full object-contain drop-shadow-xl team-logo-img" 
-                    alt={match.home.name}
-                />
+                {/* ⭐ Preloading 제거, 기본 URL 사용 (화면 깨짐 방지) */}
+                {!isHomeLogoError ? (
+                    <img 
+                        src={`/teams/${homeCode}.png`} 
+                        onError={() => setIsHomeLogoError(true)}
+                        className="w-full h-full object-contain drop-shadow-xl team-logo-img" 
+                        alt={match.home.name}
+                    />
+                ) : (
+                    <div className="flex w-full h-full items-center justify-center">
+                        <span className="font-black italic text-3xl text-white tracking-tighter">{homeCode}</span>
+                    </div>
+                )}
             </div>
 
-            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center">
-                <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.home.name}</span>
+            {/* ⭐ 짧은 팀 이름 + 간격 추가 */}
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center mt-2">
+                <span className="text-lg font-black text-white leading-tight uppercase px-1 tracking-tighter">{homeCode}</span>
             </motion.div>
           </div>
           <div className="px-2 pt-8 flex flex-col items-center">
@@ -536,24 +546,28 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
             {match.status === 'FINISHED' ? <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg">{match.home.score} : {match.away.score}</div> : <div className="text-xl font-black italic text-slate-600 bg-slate-800 px-3 py-1 rounded-lg">VS</div>}
           </div>
           <div className="flex-1 flex flex-col items-center gap-1">
-             <div className="h-6 mb-1 flex items-end">
+             <div className="h-6 mb-2 flex items-center justify-center">
                {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
             </div>
             
             <div className="w-16 h-16 flex items-center justify-center transition-all">
-                {/* ⭐ [AWAY] 변환된 Base64 사용 */}
-                <img 
-                    src={teamLogos.away || `/teams/${awayCode}.png`} 
-                    onError={(e) => {
-                        (e.target as HTMLImageElement).style.opacity = '0';
-                    }}
-                    className="w-full h-full object-contain drop-shadow-xl team-logo-img" 
-                    alt={match.away.name}
-                />
+                {!isAwayLogoError ? (
+                    <img 
+                        src={`/teams/${awayCode}.png`} 
+                        onError={() => setIsAwayLogoError(true)}
+                        className="w-full h-full object-contain drop-shadow-xl team-logo-img" 
+                        alt={match.away.name}
+                    />
+                ) : (
+                    <div className="flex w-full h-full items-center justify-center">
+                        <span className="font-black italic text-3xl text-white tracking-tighter">{awayCode}</span>
+                    </div>
+                )}
             </div>
 
-            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center">
-                <span className="text-sm font-bold text-white leading-tight uppercase px-1">{match.away.name}</span>
+            {/* ⭐ 짧은 팀 이름 + 간격 추가 */}
+            <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center mt-2">
+                <span className="text-lg font-black text-white leading-tight uppercase px-1 tracking-tighter">{awayCode}</span>
             </motion.div>
           </div>
         </div>
@@ -569,7 +583,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
             className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} 
             onClick={(e) => e.stopPropagation()}
           >
-            {/* ⭐ 하이브리드 간격 (수정/보기) */}
             <div className={`p-5 ${isEditing ? 'space-y-4' : 'space-y-1.5'}`}> 
               {POSITIONS.map((pos, idx) => {
                 const hp = homeRoster[idx], ap = awayRoster[idx];
@@ -666,18 +679,20 @@ function InteractiveBar({ score, align, color, onChange }: any) {
   const onTouchMove = (e: any) => { e.stopPropagation(); };
   return ( <div ref={barRef} onMouseDown={onStart} onTouchStart={onStart} onTouchMove={onTouchMove} className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`} style={{ touchAction: 'none' }}> <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'red' ? 'bg-red-500' : color === 'blue' ? 'bg-blue-500' : color === 'cyan' ? 'bg-cyan-400' : 'bg-slate-600'} opacity-80 pointer-events-none`} /> <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none drop-shadow-md">{score.toFixed(1)}</span> </div> );
 }
-
+// ⭐ 뱃지 투명도 제거 & 글자 크기 업 (text-[10px])
 function ResultBar({ score, align, theme }: any) { 
   const hasData = score > 0; 
   let barColor = 'bg-slate-600'; 
-  if (theme === 'red') barColor = 'bg-red-500/90'; 
-  else if (theme === 'blue') barColor = 'bg-blue-500/90'; 
+  // 투명도 제거 (Solid Color)
+  if (theme === 'red') barColor = 'bg-red-500'; 
+  else if (theme === 'blue') barColor = 'bg-blue-500'; 
   
-  let badgeColor = 'bg-slate-800/80';
+  // 뱃지 투명도 제거 (Solid Color)
+  let badgeColor = 'bg-slate-800';
   if (hasData) {
-      if (theme === 'red') badgeColor = 'bg-red-500/90';
-      else if (theme === 'blue') badgeColor = 'bg-blue-600/90';
-      else badgeColor = 'bg-slate-700/80';
+      if (theme === 'red') badgeColor = 'bg-red-500';
+      else if (theme === 'blue') badgeColor = 'bg-blue-600';
+      else badgeColor = 'bg-slate-700';
   }
 
   return ( 
@@ -685,8 +700,9 @@ function ResultBar({ score, align, theme }: any) {
       <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}> 
         <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? barColor : 'bg-transparent'}`} /> 
       </div> 
-      <div className={`w-8 h-6 flex items-center justify-center rounded-md ${badgeColor} shadow-md`}> 
-        <span className={`text-[10px] font-bold leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span> 
+      {/* 글자 크기 10px로 키움 */}
+      <div className={`w-8 h-5 flex items-center justify-center rounded-md ${badgeColor} shadow-sm`}> 
+        <span className={`text-[10px] font-black leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span> 
       </div> 
     </div> 
   ); 
