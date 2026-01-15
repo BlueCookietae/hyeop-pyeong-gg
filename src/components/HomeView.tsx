@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation'; 
 import LoginButton from '@/components/LoginButton';
 import { db, auth } from '@/lib/firebase';
-import { collection, query, getDocs, where, doc, getDoc, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { collection, query, getDocs, where, doc, getDoc, setDoc, serverTimestamp, runTransaction, onSnapshot } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'; 
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
@@ -81,6 +81,19 @@ const getRosterForMatch = (teamName: string, dateStr: string, rosters: Record<st
   return POSITIONS.map(p => `${teamName} ${p}`);
 };
 
+// ⭐ 한국 시간(KST) 구하기 함수 (YYYY-MM-DD 형식)
+const getKSTDate = () => {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const kstGap = 9 * 60 * 60 * 1000;
+  const kstDate = new Date(utc + kstGap);
+  
+  const yyyy = kstDate.getFullYear();
+  const mm = String(kstDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(kstDate.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 // --- 메인 컴포넌트 ---
 export default function HomeView({ initialMatches, initialRosters }: { initialMatches: any[], initialRosters: any }) {
   const router = useRouter();
@@ -95,6 +108,24 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isAnyEditing, setIsAnyEditing] = useState(false);
+
+  // ⭐ 실시간 스코어/결과 업데이트를 위한 리스너 추가
+  useEffect(() => {
+    // 전체 경기를 감시하면 너무 많을 수 있으니, 필요한 경우 쿼리 조건을 추가하세요.
+    // 여기서는 간단히 전체 matches 컬렉션을 구독하여 실시간성을 확보합니다.
+    const q = query(collection(db, "matches"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const updatedMatches = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      // 기존 날짜 포맷 등의 가공이 필요하다면 여기서 처리
+      // 편의상 map을 돌며 date 필드 등이 호환되도록 처리한다고 가정
+      setAllMatches(updatedMatches);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const changeTab = (newTab: number) => {
     if (newTab < 0 || newTab > 2) return;
@@ -118,10 +149,11 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   useEffect(() => {
     const targetId = searchParams.get('expanded');
     if (targetId) {
+        // matchData가 로드될 때까지 기다릴 수도 있으나, 여기선 allMatches가 있다고 가정
         if (allMatches.length > 0) {
             const targetMatch = allMatches.find(m => m.id === targetId);
             if (targetMatch) {
-                const kstToday = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Seoul"})).toISOString().split('T')[0];
+                const kstToday = getKSTDate();
                 const matchDate = targetMatch.date.split(' ')[0];
                 if (matchDate < kstToday) setCurrentTab(0);
                 else if (matchDate === kstToday) setCurrentTab(1);
@@ -166,7 +198,8 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 
   const getFilteredMatches = () => {
     const safeMatches = Array.isArray(allMatches) ? allMatches : []; 
-    const kstToday = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Seoul"})).toISOString().split('T')[0];
+    const kstToday = getKSTDate(); // ⭐ KST 기준 날짜 사용
+    
     if (currentTab === 0) return safeMatches.filter(m => m.date.split(' ')[0] < kstToday).sort((a, b) => b.date.localeCompare(a.date));
     else if (currentTab === 1) return safeMatches.filter(m => m.date.split(' ')[0] === kstToday).sort((a, b) => a.date.localeCompare(b.date));
     else return safeMatches.filter(m => m.date.split(' ')[0] > kstToday).sort((a, b) => a.date.localeCompare(b.date));
@@ -245,6 +278,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
   }, [isEditing, onEditingStateChange]);
 
   useEffect(() => {
+    // 실시간 업데이트된 match prop을 반영
     if (match.stats) setCurrentStats(match.stats);
   }, [match.stats]);
 
@@ -257,13 +291,26 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
 
   const isStarted = new Date() >= new Date(match.date.replace(' ', 'T'));
   const isFinished = match.status === 'FINISHED';
-  const homeScore = match.home.score || 0;
-  const awayScore = match.away.score || 0;
-  const isHomeWin = isFinished && homeScore > awayScore;
-  const isAwayWin = isFinished && awayScore > homeScore;
+  const isHomeWin = isFinished && (match.home.score > match.away.score);
+  const isAwayWin = isFinished && (match.away.score > match.home.score);
 
-  const homeTheme = !isFinished ? 'slate' : (isHomeWin ? 'red' : 'blue');
-  const awayTheme = !isFinished ? 'slate' : (isAwayWin ? 'red' : 'blue');
+  const checkIsTomorrow = () => {
+    const kstTodayStr = getKSTDate();
+    const matchDateStr = match.date.split(' ')[0];
+    
+    // 내일 날짜 계산 (KST 기준)
+    const today = new Date(kstTodayStr);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    
+    const yyyy = tomorrow.getFullYear();
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    const kstTomorrowStr = `${yyyy}-${mm}-${dd}`;
+
+    return matchDateStr === kstTomorrowStr;
+  };
+  const isTomorrow = checkIsTomorrow();
 
   useEffect(() => {
     if (isOpen) { 
@@ -457,6 +504,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
             </motion.div>
           </div>
           <div className="px-2 pt-8 flex flex-col items-center">
+            {isTomorrow && <span className="bg-amber-400 text-black text-[9px] font-black px-1.5 py-0.5 rounded mb-1 animate-pulse">내일</span>}
             <span className="text-[10px] text-slate-500 font-bold mb-2 tracking-widest">{formattedDate} {timeStr}</span>
             {match.status === 'FINISHED' ? <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg">{match.home.score} : {match.away.score}</div> : <div className="text-xl font-black italic text-slate-600 bg-slate-800 px-3 py-1 rounded-lg">VS</div>}
           </div>
@@ -484,6 +532,24 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                 const aScore = isEditing ? (myRatings[ap] ?? 0) : (averages[ap] ?? 0);
                 const hName = formatPlayerName(hp, match.home.name);
                 const aName = formatPlayerName(ap, match.away.name);
+
+                // ⭐ 4. 컬러 로직 수정: 상대방과의 점수 비교 (높으면 레드, 낮으면 블루, 같으면 슬레이트)
+                // 점수가 0이면(데이터 없음) 슬레이트 처리
+                let hColor = 'slate', aColor = 'slate';
+                if (hScore > 0 && aScore > 0) {
+                    if (hScore > aScore) { hColor = 'red'; aColor = 'blue'; }
+                    else if (aScore > hScore) { hColor = 'blue'; aColor = 'red'; }
+                } else if (hScore > 0 && aScore === 0) {
+                    hColor = 'red'; // 상대 점수 없으면 그냥 돋보이게? or slate? 보통 비교불가면 slate지만, 혼자 잘했으면 red 줄수도 있음. 일단 slate로 안전하게.
+                    // 요청사항: "맞라인 비교했을때" 이므로, 둘 다 데이터가 있을 때만 유효하다고 가정하거나
+                    // 혹은 그냥 절대값 기준이 아니므로, 상대가 0이면 내가 무조건 높음 -> Red? 
+                    // 하지만 0은 "평가 안함"일 수 있으니 slate가 맞음.
+                    // *수정*: 사용자가 "점수가 높은쪽이 빨간색"이라고 했으므로 단순 비교.
+                    if (hScore > aScore) { hColor = 'red'; aColor = 'blue'; }
+                } else if (aScore > 0 && hScore === 0) {
+                    if (aScore > hScore) { aColor = 'red'; hColor = 'blue'; }
+                }
+
                 return (
                   <div key={pos} className="flex flex-col gap-0">
                     <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-0">
@@ -491,9 +557,9 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                       <span className="truncate w-24 text-right">{aName}</span>
                     </div>
                     <motion.div layout className="flex items-center gap-3 h-10 relative">
-                      {isEditing ? <InteractiveBar score={hScore} align="left" color="cyan" onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={homeTheme} />}
+                      {isEditing ? <InteractiveBar score={hScore} align="left" color={hColor} onChange={(v:number) => handleRatingChange(hp, v)} /> : <ResultBar score={hScore} align="left" theme={hColor} />}
                       <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
-                      {isEditing ? <InteractiveBar score={aScore} align="right" color="red" onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={awayTheme} />}
+                      {isEditing ? <InteractiveBar score={aScore} align="right" color={aColor} onChange={(v:number) => handleRatingChange(ap, v)} /> : <ResultBar score={aScore} align="right" theme={aColor} />}
                     </motion.div>
                   </div>
                 );
@@ -505,6 +571,7 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, onToggle, onEditingS
                      <span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)} <span className="text-[10px] text-slate-500 not-italic">/ 5.0</span></span>
                      <button onClick={() => setShowTooltip(!showTooltip)} className="w-4 h-4 rounded-full border border-slate-700 text-slate-500 text-[9px] flex items-center justify-center hover:bg-slate-700 hover:text-white transition-colors hide-on-download">?</button>
                    </div>
+                   {showTooltip && <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 mt-2 text-[10px] text-slate-300 leading-relaxed text-center mx-4 mb-2">내가 응원하는 팀의 성패나 경기력과는 관계없이,<br/><span className="text-amber-400 font-bold">오직 순수 재미</span>를 기준으로 주는 평점이에요.</div>}
                    <DopamineRating score={funScore} isEditing={isEditing} onChange={(v:number) => handleRatingChange(FUN_KEY, v)} />
                 </div>
               </div>
@@ -539,6 +606,7 @@ function InteractiveBar({ score, align, color, onChange }: any) {
   const barRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const lastHapticRef = useRef(0);
+
   const triggerHaptic = useCallback(() => {
     const now = Date.now();
     if (now - lastHapticRef.current > 50) { 
@@ -546,39 +614,53 @@ function InteractiveBar({ score, align, color, onChange }: any) {
       lastHapticRef.current = now;
     }
   }, []);
+
   const update = useCallback((clientX: number) => {
     if (!barRef.current) return;
     const rect = barRef.current.getBoundingClientRect();
+    // ⭐ 2. 슬라이더 외부까지 X좌표 확장 인식
     let p = (clientX - rect.left) / rect.width;
     if (align === 'right') p = 1 - p;
+    // 0~1 사이로 클램핑하여 슬라이더 밖으로 나가도 0 또는 10점이 되게 함
     const newS = Math.round(Math.max(0, Math.min(1, p)) * 100) / 10;
+    
     if (newS !== score) { onChange(newS); triggerHaptic(); }
   }, [align, onChange, score, triggerHaptic]);
 
   const onStart = (e: any) => {
     e.stopPropagation();
     isDragging.current = true;
-    const x = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
-    update(x);
-  };
-  const onMove = (e: any) => {
-    e.stopPropagation();
-    if (!isDragging.current) return;
-    const x = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
-    update(x);
-  };
-  
-  // ⭐ 핵심: e를 인자값으로 받도록 수정
-  const onEnd = (e: any) => { 
-    if (e && e.stopPropagation) e.stopPropagation(); 
-    isDragging.current = false; 
+    const clientX = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
+    update(clientX);
+    
+    // ⭐ 2. 전역 이벤트 리스너 추가 (슬라이더 밖에서도 드래그 인식)
+    const moveHandler = (ev: any) => {
+        const cx = ev.type.includes('touch') ? ev.touches[0].clientX : ev.clientX;
+        update(cx);
+    };
+    const endHandler = () => {
+        isDragging.current = false;
+        window.removeEventListener('mousemove', moveHandler);
+        window.removeEventListener('mouseup', endHandler);
+        window.removeEventListener('touchmove', moveHandler);
+        window.removeEventListener('touchend', endHandler);
+    };
+
+    window.addEventListener('mousemove', moveHandler);
+    window.addEventListener('mouseup', endHandler);
+    window.addEventListener('touchmove', moveHandler, { passive: false });
+    window.addEventListener('touchend', endHandler);
   };
 
   return (
-    <div ref={barRef} onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd} onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
+    <div 
+      ref={barRef} 
+      onMouseDown={onStart} 
+      onTouchStart={onStart} 
       className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`}
     >
-      <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'cyan' ? 'bg-cyan-400' : 'bg-red-400'} opacity-80 pointer-events-none`} />
+      <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} 
+           className={`h-full ${color === 'red' ? 'bg-red-500' : color === 'blue' ? 'bg-blue-500' : color === 'cyan' ? 'bg-cyan-400' : 'bg-slate-600'} opacity-80 pointer-events-none`} />
       <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none drop-shadow-md">{score.toFixed(1)}</span>
     </div>
   );
@@ -586,12 +668,17 @@ function InteractiveBar({ score, align, color, onChange }: any) {
 
 function ResultBar({ score, align, theme }: any) {
   const hasData = score > 0;
+  // theme 값에 따라 색상 결정 ('red', 'blue', 'slate')
+  let barColor = 'bg-slate-600';
+  if (theme === 'red') barColor = 'bg-red-500';
+  else if (theme === 'blue') barColor = 'bg-blue-500';
+
   return (
     <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}`}>
       <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? (theme === 'red' ? 'bg-red-500' : 'bg-blue-500') : 'bg-transparent'}`} />
+        <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} transition={{ duration: 1, ease: "easeOut" }} className={`h-full ${hasData ? barColor : 'bg-transparent'}`} />
       </div>
-      <div className={`w-10 h-6 flex items-center justify-center rounded-md ${hasData ? (theme === 'red' ? 'bg-red-500' : 'bg-blue-600') : 'bg-slate-800'} shadow-md`}>
+      <div className={`w-10 h-6 flex items-center justify-center rounded-md ${hasData ? (theme === 'red' ? 'bg-red-500' : theme === 'blue' ? 'bg-blue-600' : 'bg-slate-700') : 'bg-slate-800'} shadow-md`}>
          <span className={`text-[11px] font-bold leading-none ${hasData ? 'text-white' : 'text-slate-500'}`}>{hasData ? score.toFixed(1) : '-'}</span>
       </div>
     </div>
