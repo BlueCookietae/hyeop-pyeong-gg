@@ -275,11 +275,10 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
   const [showTooltip, setShowTooltip] = useState(false);
   const [currentStats, setCurrentStats] = useState(match.stats || {});
   
-  // 팀 코드 (T1, GEN 등) 안전하게 가져오기
   const homeCode = (match.home.code || match.home.name).trim();
   const awayCode = (match.away.code || match.away.name).trim();
 
-  // 에러 상태 (텍스트 대체용)
+  // ⭐ 로고 상태: 에러 여부만 관리 (이미지 자체는 URL로 렌더링)
   const [isHomeLogoError, setIsHomeLogoError] = useState(false);
   const [isAwayLogoError, setIsAwayLogoError] = useState(false);
 
@@ -409,12 +408,11 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
     } catch (e: any) { alert(`제출 실패: ${e.message}`); }
   };
 
-  // ⭐ [누락 복구] handleRatingChange 함수 복구 및 정의
   const handleRatingChange = (name: string, val: number) => { 
       setMyRatings(prev => ({ ...prev, [name]: val })); 
   };
 
-  // ⭐ 캡처 핸들러: 클릭 시 내부 변환 후 공유
+  // ⭐ 로고 고정 + 링크 공유 (즉시 캡처)
   const handleDownload = async (e: any) => {
     e.stopPropagation();
     if (!cardRef.current) return;
@@ -520,7 +518,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
             </div>
             
             <div className="w-16 h-16 flex items-center justify-center transition-all">
-                {/* ⭐ Preloading 제거, 기본 URL 사용 (화면 깨짐 방지) */}
                 {!isHomeLogoError ? (
                     <img 
                         src={`/teams/${homeCode}.png`} 
@@ -535,7 +532,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                 )}
             </div>
 
-            {/* ⭐ 짧은 팀 이름 + 간격 추가 */}
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center mt-2">
                 <span className="text-lg font-black text-white leading-tight uppercase px-1 tracking-tighter">{homeCode}</span>
             </motion.div>
@@ -565,7 +561,6 @@ function MatchCard({ match, homeRoster, awayRoster, isOpen, isTarget, isClicked,
                 )}
             </div>
 
-            {/* ⭐ 짧은 팀 이름 + 간격 추가 */}
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="overflow-hidden team-name-text h-10 flex items-center justify-center mt-2">
                 <span className="text-lg font-black text-white leading-tight uppercase px-1 tracking-tighter">{awayCode}</span>
             </motion.div>
@@ -679,6 +674,7 @@ function InteractiveBar({ score, align, color, onChange }: any) {
   const onTouchMove = (e: any) => { e.stopPropagation(); };
   return ( <div ref={barRef} onMouseDown={onStart} onTouchStart={onStart} onTouchMove={onTouchMove} className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center select-none touch-none cursor-ew-resize ${align === 'left' ? 'justify-start' : 'justify-end'}`} style={{ touchAction: 'none' }}> <div style={{ width: `${score * 10}%`, transition: isDragging.current ? 'none' : 'width 0.1s ease-out' }} className={`h-full ${color === 'red' ? 'bg-red-500' : color === 'blue' ? 'bg-blue-500' : color === 'cyan' ? 'bg-cyan-400' : 'bg-slate-600'} opacity-80 pointer-events-none`} /> <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none drop-shadow-md">{score.toFixed(1)}</span> </div> );
 }
+
 // ⭐ 뱃지 투명도 제거 & 글자 크기 업 (text-[10px])
 function ResultBar({ score, align, theme }: any) { 
   const hasData = score > 0; 
