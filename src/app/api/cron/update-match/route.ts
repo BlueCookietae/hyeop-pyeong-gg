@@ -1,168 +1,212 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, auth } from '@/lib/firebase'; 
+import { signInAnonymously } from 'firebase/auth';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
+const APP_ID = 'lck-2026-app';
 const PANDASCORE_TOKEN = process.env.PANDASCORE_TOKEN;
 
-export async function GET(request: Request) {
-  if (!PANDASCORE_TOKEN) return NextResponse.json({ error: "Missing PandaScore Token" }, { status: 500 });
-
-  try {
-    const kstOffset = 9 * 60 * 60 * 1000;
-    const now = new Date();
-    const kstNow = new Date(now.getTime() + kstOffset);
-    
-    const todayStr = kstNow.toISOString().split('T')[0];
-    const currentMonthStr = todayStr.substring(0, 7); 
-
-    const yesterdayDate = new Date(kstNow);
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
-
-    const logRef = doc(db, 'system', 'pandascore');
-    const logSnap = await getDoc(logRef);
-    const dbData = logSnap.exists() ? logSnap.data() : {};
-
-    const logData = {
-        todayCalls: dbData.todayCalls || 0,
-        monthlyCalls: dbData.monthlyCalls || 0,
-        lastRun: dbData.lastRun || null,
-        lastCallDate: dbData.lastCallDate || ''
-    };
-
-    if (logData.lastCallDate !== todayStr) {
-        logData.todayCalls = 0; 
-        if (!logData.lastCallDate.startsWith(currentMonthStr)) {
-            logData.monthlyCalls = 0; 
-        }
+async function ensureAuth() {
+    if (auth.currentUser) return auth.currentUser;
+    try {
+        await signInAnonymously(auth);
+        return auth.currentUser;
+    } catch (error) {
+        console.error("🔥 Firebase Auth Failed:", error);
+        throw new Error("Firebase Authentication failed");
     }
+}
 
-    const q = query(collection(db, 'matches'), where('date', '>=', yesterdayStr));
-    const snap = await getDocs(q);
-    
-    // ⭐ [최적화] 필터링 로직 강화
-    const activeMatches = snap.docs.filter(doc => {
-        const data = doc.data();
-        
-        // 1. 이미 끝난 건 패스
-        if (data.status === 'FINISHED') return false; 
-        
-        // 2. LIVE면 무조건 호출 (점수판 중계 중)
-        if (data.status === 'LIVE') return true;
+async function fetchPanda(endpoint: string) {
+    if (!PANDASCORE_TOKEN) throw new Error("PANDASCORE_TOKEN is missing");
+    const separator = endpoint.includes('?') ? '&' : '?';
+    const url = `${endpoint}${separator}token=${PANDASCORE_TOKEN}`;
+    console.log(`📡 Fetching Panda: ${endpoint}`); 
+    const res = await fetch(url);
+    if (!res.ok) {
+        const text = await res.text();
+        console.error(`❌ Panda API Error (${res.status}):`, text.substring(0, 100));
+        throw new Error(`PandaScore API Error: ${res.status}`);
+    }
+    return await res.json();
+}
 
-        // 3. SCHEDULED(예정) 상태일 때
-        if (data.date) {
-            const matchTime = new Date(data.date.replace(' ', 'T') + ':00'); 
-            const diffMs = matchTime.getTime() - kstNow.getTime();
-            const diffMinutes = diffMs / (1000 * 60); // 분 단위 변환
+// --- 기능 로직 ---
 
-            // ⭐ [핵심] 경기 시작 10분 전 ~ 이미 시간 지남(음수)일 때만 호출
-            // 예: 17:00 경기인데 지금 16:30 -> 30분 남음 -> 호출 X
-            // 예: 17:00 경기인데 지금 16:55 -> 5분 남음 -> 호출 O
-            // 예: 17:00 경기인데 지금 17:10 -> -10분 (이미 지남) -> 호출 O (상태를 LIVE로 바꿔야 하니까!)
-            if (diffMinutes <= 10) return true;
-        }
+async function syncTeamToDB(idOrName: string) {
+    await ensureAuth();
+    let teamData: any = null;
+    const isId = !isNaN(Number(idOrName));
 
-        return false;
-    });
-
-    let apiCalled = false;
-    let updatedCount = 0;
-
-    if (activeMatches.length > 0) {
-        console.log(`🐼 Found ${activeMatches.length} matches needed update. Calling API...`);
-        
-        const response = await fetch(
-            `https://api.pandascore.co/lol/matches?range[begin_at]=${yesterdayStr}T00:00:00Z,${todayStr}T23:59:59Z&token=${PANDASCORE_TOKEN}`
-        );
-        
-        if (!response.ok) throw new Error(`PandaScore API Failed: ${response.statusText}`);
-        
-        const pandaData = await response.json();
-        apiCalled = true;
-
-        for (const myMatch of activeMatches) {
-            const myData = myMatch.data();
-            const homeCode = myData.home.code || myData.home.name;
-            const awayCode = myData.away.code || myData.away.name;
-
-            const foundPandaMatch = pandaData.find((p: any) => {
-                const teamA = p.opponents[0]?.opponent?.acronym;
-                const teamB = p.opponents[1]?.opponent?.acronym;
-                const hasHome = teamA === homeCode || teamB === homeCode;
-                const hasAway = teamA === awayCode || teamB === awayCode;
-                return hasHome && hasAway;
-            });
-
-            if (foundPandaMatch) {
-                const teamA_Res = foundPandaMatch.results[0];
-                const teamB_Res = foundPandaMatch.results[1];
-                const teamA_Code = foundPandaMatch.opponents[0].opponent.acronym;
-                
-                let realHomeScore = 0;
-                let realAwayScore = 0;
-
-                if (teamA_Code === homeCode) {
-                    realHomeScore = teamA_Res.score;
-                    realAwayScore = teamB_Res.score;
-                } else {
-                    realHomeScore = teamB_Res.score;
-                    realAwayScore = teamA_Res.score;
-                }
-
-                let newStatus = 'SCHEDULED';
-                if (foundPandaMatch.status === 'running') newStatus = 'LIVE';
-                if (foundPandaMatch.status === 'finished') newStatus = 'FINISHED';
-
-                if (
-                    myData.home.score !== realHomeScore || 
-                    myData.away.score !== realAwayScore || 
-                    myData.status !== newStatus
-                ) {
-                    await updateDoc(doc(db, 'matches', myMatch.id), {
-                        'home.score': realHomeScore,
-                        'away.score': realAwayScore,
-                        'status': newStatus
-                    });
-                    updatedCount++;
-                }
-            }
-        }
+    if (isId) {
+        console.log(`🔍 Fetching by ID Filter: ${idOrName}`);
+        const results = await fetchPanda(`https://api.pandascore.co/lol/teams?filter[id]=${idOrName}`);
+        if (results && results.length > 0) teamData = results[0];
     } else {
-        // 호출 안 함 로그
-        console.log("🐼 No urgent matches. Save money mode ON.");
+        const term = encodeURIComponent(idOrName);
+        console.log(`🔍 Searching team by name: ${idOrName}`);
+        
+        let results = await fetchPanda(`https://api.pandascore.co/lol/teams?search[acronym]=${term}`);
+        if (!results || results.length === 0) {
+            results = await fetchPanda(`https://api.pandascore.co/lol/teams?search[name]=${term}`);
+        }
+
+        if (results && results.length > 0) {
+            const target = idOrName.toUpperCase();
+            teamData = results.find((t: any) => t.name === idOrName) ||
+                       results.find((t: any) => t.acronym?.toUpperCase() === target) ||
+                       results.find((t: any) => t.location === 'KR') ||
+                       results[0];
+            console.log(`✅ Selected: ${teamData.name}`);
+        }
     }
 
-    if (apiCalled) {
-        logData.todayCalls += 1;
-        logData.monthlyCalls += 1;
+    if (!teamData) throw new Error(`Team '${idOrName}' not found.`);
+
+    if (!teamData.players || teamData.players.length === 0) {
+        try {
+            console.log("⚠️ Fetching details for roster...");
+            const detail = await fetchPanda(`https://api.pandascore.co/lol/teams/${teamData.id}`);
+            teamData = detail; 
+        } catch (e) {
+            console.warn("⚠️ Detail fetch failed, saving basic info only.");
+        }
     }
-    
-    await setDoc(logRef, {
-        ...logData,
-        lastRun: kstNow.toISOString(),
-        lastCallDate: todayStr,
-        lastResult: apiCalled 
-            ? `Success (${updatedCount} updated)` 
-            : `Skipped (Next match > 10m away)`, // 로그 메시지 변경
-        status: 'OK'
-    });
 
-    return NextResponse.json({ 
-        success: true, 
-        apiCalled, 
-        updated: updatedCount,
-        usage: { today: logData.todayCalls, month: logData.monthlyCalls } 
-    });
+    const docId = String(teamData.id);
+    const playerDetails = (teamData.players || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        role: p.role || 'unknown',
+        image: p.image_url,
+        active: true
+    }));
 
-  } catch (error) {
-    console.error("Cron Error:", error);
-    await setDoc(doc(db, 'system', 'pandascore'), { 
-        lastRun: new Date().toISOString(), 
-        status: 'ERROR', 
-        errorMsg: String(error) 
+    await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'teams', docId), {
+        id: teamData.id,
+        name: teamData.name,
+        acronym: teamData.acronym,
+        logo: teamData.image_url,
+        year: "2026",
+        playerDetails: playerDetails,
+        updatedAt: serverTimestamp()
     }, { merge: true });
 
-    return NextResponse.json({ error: String(error) }, { status: 500 });
-  }
+    return { success: true, team: teamData.name, players_count: playerDetails.length, year: "2026" };
+}
+
+// ⭐ [디버깅 강화] 경기 데이터 동기화
+async function syncMatchData() {
+    await ensureAuth();
+    console.log("🎮 Syncing Match Data (Start)...");
+    
+    // 1. LCK 리그 ID 확인 (293이 맞는지, 혹은 2026년 데이터가 있는지)
+    // 범위를 넓혀서 100개를 긁어봅니다.
+    const url = `https://api.pandascore.co/lol/matches?filter[league_id]=293&range[begin_at]=2026-01-01T00:00:00Z,2026-12-31T23:59:59Z&per_page=100&sort=begin_at`;
+    
+    const matches = await fetchPanda(url);
+    
+    console.log(`🐼 PandaScore returned: ${matches.length} matches`); // ⭐ 몇 개 왔는지 확인!
+
+    if (matches.length === 0) {
+        console.warn("⚠️ No matches found for LCK (ID 293) in 2026.");
+        console.warn("👉 Try checking if the League ID is correct or if the schedule is published.");
+        return { success: false, count: 0, message: "No matches found from API" };
+    }
+    
+    let count = 0;
+    for (const m of matches) {
+        // 상대팀 정보가 없는(TBD) 경기는 제외
+        if (!m.opponents || m.opponents.length < 2) {
+            console.log(`Skipping match ${m.id}: Opponents not ready (TBD)`);
+            continue;
+        }
+        
+        console.log(`💾 Saving Match: ${m.name} (${m.begin_at})`);
+
+        const date = new Date(m.begin_at);
+        const kstDate = new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().replace("T", " ").substring(0, 16);
+
+        const gamesData = (m.games || []).map((g: any, index: number) => ({
+            id: g.id,
+            position: g.position || index + 1,
+            finished: g.finished,
+            winner_id: g.winner?.id || null,
+        }));
+
+        const matchData = {
+            id: m.id,
+            league: "LCK",
+            round: m.serie?.name || "2026 Season",
+            date: kstDate,
+            original_date: m.begin_at,
+            status: m.status.toUpperCase(),
+            home: {
+                id: m.opponents[0].opponent.id,
+                name: m.opponents[0].opponent.name,
+                code: m.opponents[0].opponent.acronym,
+                logo: m.opponents[0].opponent.image_url,
+                score: m.results[0]?.score || 0
+            },
+            away: {
+                id: m.opponents[1].opponent.id,
+                name: m.opponents[1].opponent.name,
+                code: m.opponents[1].opponent.acronym,
+                logo: m.opponents[1].opponent.image_url,
+                score: m.results[1]?.score || 0
+            },
+            games: gamesData,
+            updatedAt: serverTimestamp()
+        };
+        
+        // 경로 확인: artifacts/lck-2026-app/public/data/matches/{id}
+        await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'matches', String(m.id)), matchData, { merge: true });
+        count++;
+    }
+    
+    console.log(`✅ Successfully saved ${count} matches to Firestore.`);
+    return { success: true, count, message: "Match data synced" };
+}
+
+export async function GET(request: Request) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const mode = searchParams.get('mode');
+        const targetId = searchParams.get('id');
+        const inspectId = searchParams.get('inspectId');
+        const inspectType = searchParams.get('inspectType');
+
+        console.log(`🤖 API Request: mode=${mode}, target=${targetId || inspectId}`);
+
+        if (mode === 'inspect') {
+            if (!inspectId) throw new Error("Missing inspectId");
+            let url = "";
+            if (inspectType === 'match') url = `https://api.pandascore.co/lol/matches/${inspectId}`;
+            else if (inspectType === 'team') {
+                if (!isNaN(Number(inspectId))) url = `https://api.pandascore.co/lol/teams/${inspectId}`;
+                else url = `https://api.pandascore.co/lol/teams?search[name]=${encodeURIComponent(inspectId)}`;
+            }
+            const data = await fetchPanda(url);
+            return NextResponse.json(data);
+        }
+
+        if (mode === 'sync_team' && targetId) {
+            const result = await syncTeamToDB(targetId);
+            return NextResponse.json(result);
+        }
+
+        if (mode === 'sync_matches') {
+            const result = await syncMatchData();
+            return NextResponse.json(result);
+        }
+
+        return NextResponse.json({ error: "Invalid mode parameter" }, { status: 400 });
+
+    } catch (error: any) {
+        console.error("🔥 Critical API Error:", error);
+        return NextResponse.json(
+            { error: error.message || "Internal Server Error", details: String(error) }, 
+            { status: 500 }
+        );
+    }
 }
