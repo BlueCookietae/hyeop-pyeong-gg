@@ -40,7 +40,6 @@ const urlToBase64 = async (url: string) => {
   } catch (e) { return null; }
 };
 
-// ⭐ [핵심 수정] 무조건 한국 시간(KST) 기준 날짜 문자열(YYYY-MM-DD) 반환
 const getKSTDateString = (dateInput?: string | Date) => {
   const date = dateInput ? new Date(dateInput) : new Date();
   return new Intl.DateTimeFormat('en-CA', {
@@ -96,7 +95,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     const targetMatch = allMatches.find(m => String(m.id) === String(activeId));
     
     if (targetMatch) {
-        // ⭐ KST 함수 사용하여 비교
         const kstToday = getKSTDateString();
         const matchDateKST = getKSTDateString(targetMatch.date);
         
@@ -141,10 +139,9 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
       setAllMatches(prev => prev.map(m => String(m.id) === String(matchId) ? { ...m, stats: newStats } : m));
   };
 
-  // ⭐ 필터링 로직에 KST 적용
   const getFilteredMatches = () => {
     const safeMatches = Array.isArray(allMatches) ? allMatches : []; 
-    const kstToday = getKSTDateString(); // "2026-01-22"
+    const kstToday = getKSTDateString();
     
     const filterFn = (m: any) => {
         const mDate = getKSTDateString(m.date);
@@ -165,7 +162,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
-      {/* 헤더 */}
       <div className={`sticky top-0 z-40 transition-all duration-300 border-b border-slate-800/50 ${isHeaderCompact ? 'bg-slate-950/95 backdrop-blur-md shadow-lg h-[74px]' : 'bg-slate-950 h-28'}`}>
         <div className="max-w-md mx-auto h-full flex flex-col justify-between">
           <header className={`flex items-center justify-between px-5 transition-all duration-300 ${isHeaderCompact ? 'pt-2' : 'pt-4'}`}>
@@ -182,7 +178,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
             </button>
             <div className="flex flex-col items-center">
               <div className={`overflow-hidden transition-all duration-300 ${isHeaderCompact ? 'h-0 opacity-0' : 'h-7 opacity-100'}`}>
-                <span className="text-base font-black text-white italic tracking-tighter uppercase">{TAB_NAMES[currentTab]}</span>
+                <span className="text-base font-black text-white italic tracking-tighter uppercase px-2">{TAB_NAMES[currentTab]}</span>
               </div>
               <div className={`flex gap-1.5 transition-all duration-300 ${isHeaderCompact ? 'mt-0' : 'mt-1'}`}>
                 {[0, 1, 2].map(i => (<motion.div key={i} animate={{ backgroundColor: i === currentTab ? '#22d3ee' : '#334155', scale: i === currentTab ? 1.2 : 1 }} className="w-1.5 h-1.5 rounded-full" />))}
@@ -195,7 +191,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         </div>
       </div>
 
-      {/* 리스트 */}
       <div className="max-w-md mx-auto p-4 min-h-[50vh]">
         <AnimatePresence mode='wait'>
           <motion.div 
@@ -239,12 +234,11 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
   const cardRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [hasParticipated, setHasParticipated] = useState(false); 
   const [activeGameId, setActiveGameId] = useState<string>('ALL');
-  
-  const [myRatings, setMyRatings] = useState<any>({ games: {}, [FUN_KEY]: 0 });
   const currentStats = match.stats || {};
+
+  const [isMyHoneyJam, setIsMyHoneyJam] = useState(false);
+  const [isLoadingFun, setIsLoadingFun] = useState(false);
 
   const [teamLogos, setTeamLogos] = useState({ home: '', away: '' });
   const [isImagesReady, setIsImagesReady] = useState(false);
@@ -254,16 +248,48 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
 
   const games = match.games || []; 
   const sortedGames = [...games].sort((a: any, b: any) => a.position - b.position);
+  
+  const visibleGames = sortedGames.filter((g: any, idx: number) => {
+      if (g.finished) return true;
+      if (idx === 0) return true;
+      if (sortedGames[idx - 1]?.finished) return true;
+      return false;
+  });
 
-  const getPlayerName = (teamId: number, pos: string) => {
-    const roster = rosters[teamId] || {};
-    return roster[pos] || 'SUB';
+  const currentSetNumber = (() => {
+      if (match.status !== 'RUNNING') return null;
+      const runningGame = sortedGames.find((g: any) => !g.finished);
+      return runningGame ? runningGame.position : null;
+  })();
+
+  const getPlayerName = (teamId: number, pos: string, targetGameId: string) => {
+    const teamRosterMap = rosters[teamId] || {};
+    const players = teamRosterMap[pos]; 
+
+    if (!Array.isArray(players) || players.length === 0) return 'SUB';
+
+    if (targetGameId === 'ALL') {
+        const starter = players.find((p: any) => p.isStarter);
+        return starter ? starter.name : players[0].name;
+    }
+
+    const targetGameData = games.find((g: any) => String(g.id) === String(targetGameId));
+    if (targetGameData && targetGameData.active_players) {
+        const side = match.home.id === teamId ? 'home' : 'away';
+        const pinKey = `pinned_${side}_${pos}`;
+        const pinnedPlayerId = targetGameData.active_players[pinKey];
+
+        if (pinnedPlayerId) {
+            const pinnedPlayer = players.find((p: any) => String(p.id) === String(pinnedPlayerId));
+            if (pinnedPlayer) return pinnedPlayer.name;
+        }
+    }
+
+    const starter = players.find((p: any) => p.isStarter);
+    return starter ? starter.name : players[0].name;
   };
 
-  // ⭐ [추가] Bo3 / Bo5 정보 (DB 정보 사용, 없으면 Bo3 기본)
   const boFormat = match.number_of_games ? `Bo${match.number_of_games}` : 'Bo3';
-
-  // ⭐ [추가] 내일 경기인지 확인 (뱃지용)
   const isTomorrow = (() => {
       const todayDate = new Date(getKSTDateString());
       const tomorrow = new Date(todayDate);
@@ -272,6 +298,9 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
       const matchDateStr = getKSTDateString(match.date);
       return matchDateStr === tomorrowStr;
   })();
+
+  const isLive = match.status === 'RUNNING';
+  const funCount = currentStats.total?.[FUN_KEY]?.sum || 0;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -284,25 +313,24 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
     preloadLogos();
   }, [homeCode, awayCode, isOpen]);
 
-  useEffect(() => { if (!isOpen) { hasScrolledRef.current = false; setIsImagesReady(false); setIsEditing(false); setActiveGameId('ALL'); } }, [isOpen]);
+  useEffect(() => { if (!isOpen) { hasScrolledRef.current = false; setIsImagesReady(false); setActiveGameId('ALL'); } }, [isOpen]);
 
   useEffect(() => {
     if (isOpen || isFocused) { 
-      const fetchMyRatings = async () => {
+      const fetchMyRating = async () => {
         const user = auth.currentUser;
-        if (!user) { setHasParticipated(false); return; }
+        if (!user) return;
         const docId = `${user.uid}_${match.id}`;
-        const snap = await getDoc(doc(db, "matchRatings", docId));
-        if (snap.exists()) {
-          setHasParticipated(true);
-          const data = snap.data().ratings;
-          setMyRatings({ games: data.games || {}, [FUN_KEY]: data[FUN_KEY] || 0 });
-        } else {
-          setHasParticipated(false);
-          setMyRatings({ games: {}, [FUN_KEY]: 0 });
-        }
+        try {
+            const snap = await getDoc(doc(db, "matchRatings", docId));
+            if (snap.exists()) {
+                const data = snap.data().ratings;
+                if (data && data[FUN_KEY] === 1) setIsMyHoneyJam(true);
+                else setIsMyHoneyJam(false);
+            }
+        } catch(e) { console.error(e); }
       };
-      fetchMyRatings(); 
+      fetchMyRating(); 
       
       if (!hasScrolledRef.current) {
           setTimeout(() => {
@@ -319,20 +347,66 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
     } 
   }, [isOpen, isTarget, isClicked, isFocused, lastClickedId, match.id, onRestoreComplete]);
 
-  // 점수 계산 로직
-  const getScore = (playerName: string, isMyScore: boolean) => {
-    if (isMyScore) {
-        if (activeGameId === 'ALL') {
-             let sum = 0, count = 0;
-             Object.values(myRatings.games || {}).forEach((game: any) => {
-                 const score = game[playerName]; 
-                 if (score && score > 0) { sum += score; count++; }
-             });
-             return count > 0 ? sum / count : 0;
-        } else {
-             return myRatings.games?.[activeGameId]?.[playerName] || 0;
-        }
-    } else {
+  const handleToggleHoneyJam = async () => {
+      const user = auth.currentUser;
+      if (!user) return alert("로그인이 필요합니다.");
+      if (isLoadingFun) return;
+
+      setIsLoadingFun(true);
+      const newVal = isMyHoneyJam ? 0 : 1; 
+
+      setIsMyHoneyJam(newVal === 1); 
+
+      try {
+          const newStats = await runTransaction(db, async (transaction) => {
+              const ratingRef = doc(db, "matchRatings", `${user.uid}_${match.id}`);
+              const matchRef = doc(db, "artifacts", APP_ID, 'public', 'data', 'matches', String(match.id));
+              
+              const ratingDoc = await transaction.get(ratingRef);
+              const matchDoc = await transaction.get(matchRef);
+
+              const currentStats = matchDoc.exists() ? matchDoc.data()?.stats || { total: {}, games: {} } : { total: {}, games: {} };
+              const oldRatings = ratingDoc.exists() ? ratingDoc.data().ratings : {};
+              const oldVal = oldRatings[FUN_KEY] || 0; 
+
+              const newStats = JSON.parse(JSON.stringify(currentStats));
+              if (!newStats.total) newStats.total = {};
+              if (!newStats.total[FUN_KEY]) newStats.total[FUN_KEY] = { sum: 0, count: 0 };
+
+              if (oldVal > 0) {
+                  newStats.total[FUN_KEY].sum -= oldVal;
+                  newStats.total[FUN_KEY].count--;
+              }
+              if (newVal > 0) {
+                  newStats.total[FUN_KEY].sum += newVal;
+                  newStats.total[FUN_KEY].count++;
+              }
+
+              const newMyRatings = { ...oldRatings, [FUN_KEY]: newVal };
+
+              transaction.set(ratingRef, { 
+                  userId: user.uid, 
+                  matchId: match.id, 
+                  ratings: newMyRatings, 
+                  createdAt: serverTimestamp() 
+              }, { merge: true });
+              
+              transaction.set(matchRef, { stats: newStats }, { merge: true });
+              return newStats;
+          });
+
+          if (newStats) onStatsUpdate(match.id, newStats);
+
+      } catch (e: any) {
+          console.error(e);
+          alert("투표 실패: " + e.message);
+          setIsMyHoneyJam(!isMyHoneyJam); // 롤백
+      } finally {
+          setIsLoadingFun(false);
+      }
+  };
+
+  const getScore = (playerName: string) => {
         if (activeGameId === 'ALL') {
             let sumOfAverages = 0;
             let gamesPlayed = 0;
@@ -349,89 +423,6 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
             const stat = currentStats.games?.[activeGameId]?.[playerName];
             return stat && stat.count > 0 ? stat.sum / stat.count : 0;
         }
-    }
-  };
-
-  const handleRatingChange = (playerName: string, val: number) => {
-      if (activeGameId === 'ALL') { alert("개별 게임 탭(Game 1, 2...)을 선택해서 평점을 입력해주세요!"); return; }
-      setMyRatings((prev: any) => ({
-          ...prev,
-          games: {
-              ...prev.games,
-              [activeGameId]: {
-                  ...(prev.games[activeGameId] || {}),
-                  [playerName]: val
-              }
-          }
-      }));
-  };
-
-  const handleFunScoreChange = (val: number) => {
-      setMyRatings((prev: any) => ({ ...prev, [FUN_KEY]: val }));
-  };
-
-  const handleSubmit = async (e: any) => {
-    e.stopPropagation();
-    const user = auth.currentUser;
-    if (!user) return;
-    if (!window.confirm("이 점수로 제출하시겠습니까?")) return;
-
-    try {
-      const newStats = await runTransaction(db, async (transaction) => {
-        const ratingRef = doc(db, "matchRatings", `${user.uid}_${match.id}`);
-        const matchRef = doc(db, "artifacts", APP_ID, 'public', 'data', 'matches', String(match.id));
-        
-        const matchDoc = await transaction.get(matchRef);
-        const ratingDoc = await transaction.get(ratingRef);
-        
-        const currentStats = matchDoc.exists() ? matchDoc.data()?.stats || { total: {}, games: {} } : { total: {}, games: {} };
-        const oldRatings = ratingDoc.exists() ? ratingDoc.data().ratings : { games: {}, [FUN_KEY]: 0 };
-
-        const newStats = JSON.parse(JSON.stringify(currentStats));
-        if (!newStats.games) newStats.games = {};
-        if (!newStats.total) newStats.total = {};
-        
-        Object.entries(oldRatings.games || {}).forEach(([gId, players]: any) => {
-            if (!newStats.games[gId]) newStats.games[gId] = {};
-            Object.entries(players).forEach(([pName, score]: any) => {
-                 if (score > 0) { 
-                     if (!newStats.games[gId][pName]) newStats.games[gId][pName] = { sum: 0, count: 0 };
-                     newStats.games[gId][pName].sum -= score;
-                     newStats.games[gId][pName].count--;
-                 }
-            });
-        });
-
-        Object.entries(myRatings.games || {}).forEach(([gId, players]: any) => {
-            if (!newStats.games[gId]) newStats.games[gId] = {};
-            Object.entries(players).forEach(([pName, score]: any) => {
-                 if (score > 0) { 
-                     if (!newStats.games[gId][pName]) newStats.games[gId][pName] = { sum: 0, count: 0 };
-                     newStats.games[gId][pName].sum += score;
-                     newStats.games[gId][pName].count++;
-                 }
-            });
-        });
-        
-        const oldFun = oldRatings[FUN_KEY] || 0;
-        const newFun = myRatings[FUN_KEY] || 0;
-        if (!newStats.total[FUN_KEY]) newStats.total[FUN_KEY] = { sum: 0, count: 0 };
-        if (oldFun > 0) { newStats.total[FUN_KEY].sum -= oldFun; newStats.total[FUN_KEY].count--; }
-        if (newFun > 0) { newStats.total[FUN_KEY].sum += newFun; newStats.total[FUN_KEY].count++; }
-
-        transaction.set(ratingRef, { userId: user.uid, matchId: match.id, ratings: myRatings, createdAt: serverTimestamp() });
-        transaction.set(matchRef, { stats: newStats }, { merge: true });
-        
-        return newStats;
-      });
-      
-      alert("평점이 반영되었습니다!");
-      setIsEditing(false); 
-      setHasParticipated(true);
-      setActiveGameId('ALL');
-      if (newStats) onStatsUpdate(match.id, newStats);
-
-    } catch (e: any) { console.error(e); alert(`제출 실패: ${e.message}`); }
   };
 
   const handleDownload = async (e: any) => {
@@ -445,39 +436,54 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
       } finally { cardRef.current.classList.remove('download-mode'); }
   };
 
-  const funScore = isEditing ? (myRatings[FUN_KEY] ?? 0) : (currentStats.total?.[FUN_KEY] ? currentStats.total[FUN_KEY].sum / currentStats.total[FUN_KEY].count : 0);
   const isStarted = new Date() >= new Date(match.date.replace(' ', 'T'));
   const isFinished = match.status === 'FINISHED';
   const isHomeWin = isFinished && (match.home.score > match.away.score);
   const isAwayWin = isFinished && (match.away.score > match.home.score);
 
   return (
-    <div ref={cardRef} onClick={() => { if(isStarted && !isEditing) onToggle(isOpen); }} className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer ${isEditing ? 'bg-indigo-950/40 border-indigo-500/50' : 'bg-slate-900 border-slate-800'}`}>
+    <div ref={cardRef} onClick={() => { if(isStarted) onToggle(isOpen); }} className={`border rounded-[2.5rem] overflow-hidden shadow-2xl relative transition-all duration-500 cursor-pointer bg-slate-900 border-slate-800`}>
       <style jsx global>{`.download-mode .hide-on-download { display: none !important; }`}</style>
       
       <div className="absolute top-0 inset-x-0 flex justify-center -mt-0.5 z-10">
-        {/* ⭐ [수정] 리그 정보 + Bo3 + 내일 뱃지 */}
-        <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg flex items-center gap-2 ${isEditing ? 'bg-indigo-900 border-indigo-500 text-white' : 'bg-slate-800 border-slate-700 text-cyan-400'}`}>
+        <div className={`px-4 py-1.5 rounded-b-xl border-b border-x shadow-lg flex items-center gap-2 bg-slate-800 border-slate-700 text-cyan-400`}>
           <span className="text-[10px] font-black tracking-widest uppercase">{match.league} • {match.round} • {boFormat}</span>
           {isTomorrow && <span className="text-[9px] bg-amber-500 text-black px-1.5 rounded font-bold animate-pulse">TOMORROW</span>}
+          {isLive && (
+              <span className="flex items-center gap-1.5 bg-red-600 text-white px-2 py-0.5 rounded animate-pulse">
+                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
+                  <span className="text-[9px] font-black tracking-wider">LIVE {currentSetNumber ? `• SET ${currentSetNumber}` : ''}</span>
+              </span>
+          )}
         </div>
       </div>
 
       <div className="p-8 pt-12 pb-4 text-center">
-        {/* ... (기존과 동일) ... */}
         <div className="flex justify-between items-start">
           <div className="flex-1 flex flex-col items-center gap-1">
             <div className="h-6 mb-2 flex items-center justify-center">{isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}</div>
-            <div className="w-16 h-16"><img src={isImagesReady ? teamLogos.home : `/teams/${homeCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? 'opacity-100' : 'opacity-50'}`} /></div>
+            <div className="w-16 h-16"><img src={isImagesReady ? teamLogos.home : `/teams/${homeCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} /></div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{homeCode}</span></motion.div>
           </div>
+          
           <div className="px-2 pt-8 flex flex-col items-center">
             <span className="text-[10px] text-slate-500 font-bold mb-2 tracking-widest">{match.date.substring(5, 16).replace('-', '.')}</span>
-            {isFinished ? <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg">{match.home.score} : {match.away.score}</div> : <div className="text-xl font-black italic text-slate-600 bg-slate-800 px-3 py-1 rounded-lg">VS</div>}
+            {isFinished ? (
+                <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg px-3">{match.home.score} : {match.away.score}</div> 
+            ) : (
+                isLive ? (
+                    <div className="text-2xl font-black italic text-transparent bg-clip-text bg-gradient-to-b from-amber-300 via-amber-500 to-amber-700 tracking-tighter drop-shadow-[0_2px_10px_rgba(245,158,11,0.5)] scale-110 px-3">
+                        {match.home.score} : {match.away.score}
+                    </div>
+                ) : (
+                    <div className="text-xl font-black italic text-slate-600 bg-slate-800 px-3 py-1 rounded-lg">VS</div>
+                )
+            )}
           </div>
+
           <div className="flex-1 flex flex-col items-center gap-1">
             <div className="h-6 mb-2 flex items-center justify-center">{isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}</div>
-            <div className="w-16 h-16"><img src={isImagesReady ? teamLogos.away : `/teams/${awayCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? 'opacity-100' : 'opacity-50'}`} /></div>
+            <div className="w-16 h-16"><img src={isImagesReady ? teamLogos.away : `/teams/${awayCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} /></div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{awayCode}</span></motion.div>
           </div>
         </div>
@@ -485,7 +491,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
 
       <AnimatePresence>
         {isOpen && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y cursor-default ${isEditing ? 'bg-black/20 border-indigo-500/30' : 'bg-slate-950/30 border-slate-800/50'}`} onClick={(e) => e.stopPropagation()}>
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className={`overflow-hidden mx-4 mb-4 rounded-[2rem] border-y cursor-default bg-slate-950/30 border-slate-800/50`} onClick={(e) => e.stopPropagation()}>
             <div className="p-5 space-y-4">
               
               <div className="flex flex-col gap-2 mb-2">
@@ -496,31 +502,50 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
                       AVERAGE
                   </button>
                   <div className="flex justify-center gap-2 overflow-x-auto no-scrollbar">
-                      {sortedGames.map((g: any) => (
-                          <button key={g.id} onClick={() => setActiveGameId(String(g.id))} className={`px-4 py-1.5 rounded-xl text-[10px] font-black transition-all whitespace-nowrap flex items-center gap-1 ${activeGameId === String(g.id) ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
-                              <span>GAME {g.position}</span>
-                              {g.winner_id && <span className={`w-1.5 h-1.5 rounded-full ${g.winner_id === match.home.id ? 'bg-red-500' : 'bg-blue-500'}`}></span>}
-                          </button>
-                      ))}
+                      {visibleGames.map((g: any) => {
+                          let winnerLogo = null;
+                          if (g.winner_id) {
+                              if (Number(g.winner_id) === Number(match.home.id)) winnerLogo = isImagesReady ? teamLogos.home : match.home.logo;
+                              else if (Number(g.winner_id) === Number(match.away.id)) winnerLogo = isImagesReady ? teamLogos.away : match.away.logo;
+                          }
+                          return (
+                              <button key={g.id} onClick={() => setActiveGameId(String(g.id))} className={`px-4 py-1.5 rounded-xl text-[10px] font-black transition-all whitespace-nowrap flex items-center gap-1 ${activeGameId === String(g.id) ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                                  <span>GAME {g.position}</span>
+                                  {winnerLogo && <img src={winnerLogo} className="w-3.5 h-3.5 object-contain ml-1" alt="win" />}
+                              </button>
+                          );
+                      })}
                   </div>
               </div>
 
-              {/* ... (나머지 렌더링 로직 동일) ... */}
               <div className="space-y-1">
                 {POSITIONS.map((pos) => {
-                    const hp = getPlayerName(match.home.id, pos);
-                    const ap = getPlayerName(match.away.id, pos);
-                    const hScore = getScore(hp, isEditing);
-                    const aScore = getScore(ap, isEditing);
+                    const hp = getPlayerName(match.home.id, pos, activeGameId);
+                    const ap = getPlayerName(match.away.id, pos, activeGameId);
+                    const hScore = getScore(hp);
+                    const aScore = getScore(ap); 
+                    
+                    // ⭐ [수정] 컬러 코딩 로직 (데이터 O -> 상대평가, 데이터 X -> 결과따라)
                     let hColor = 'slate', aColor = 'slate';
-                    if (hScore > 0 && aScore > 0) { if (hScore > aScore) { hColor = 'red'; aColor = 'blue'; } else if (aScore > hScore) { hColor = 'blue'; aColor = 'red'; } }
+                    
+                    if (hScore > 0 && aScore > 0) {
+                        // 둘 다 점수 있음 -> 상대평가
+                        if (hScore >= aScore) { hColor = 'red'; aColor = 'blue'; }
+                        else { hColor = 'blue'; aColor = 'red'; }
+                    } else if (isFinished) {
+                        // 점수 부족 & 경기 끝남 -> 승패 따라감
+                        if (isHomeWin) { hColor = 'red'; aColor = 'blue'; }
+                        else { hColor = 'blue'; aColor = 'red'; }
+                    }
+                    // 경기 중이고 점수 없으면 Slate(회색) 유지
+
                     return (
                         <div key={pos} className="flex flex-col gap-0 mb-1">
                             <div className="flex justify-between px-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1 relative z-10 leading-none"><span className="truncate w-24">{hp}</span><span className="truncate w-24 text-right">{ap}</span></div>
-                            <motion.div layout className={`flex items-center gap-2 ${isEditing ? 'h-9' : 'h-8'}`}>
-                                {isEditing ? <InteractiveBar score={hScore} align="left" color={hColor} onChange={(v:number) => handleRatingChange(hp, v)} disabled={activeGameId === 'ALL'} /> : <ResultBar score={hScore} align="left" theme={hColor} />}
+                            <motion.div layout className={`flex items-center gap-2 h-8`}>
+                                <ResultBar score={hScore} align="left" theme={hColor} />
                                 <div className="w-6 flex justify-center opacity-40"><img src={POS_ICONS[pos]} alt={pos} className="w-4 h-4 object-contain" /></div>
-                                {isEditing ? <InteractiveBar score={aScore} align="right" color={aColor} onChange={(v:number) => handleRatingChange(ap, v)} disabled={activeGameId === 'ALL'} /> : <ResultBar score={aScore} align="right" theme={aColor} />}
+                                <ResultBar score={aScore} align="right" theme={aColor} />
                             </motion.div>
                         </div>
                     );
@@ -528,35 +553,23 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               </div>
 
               <div className="pt-2 border-t border-slate-800/50">
-                <div className="flex flex-col items-center gap-0">
-                   <div className="flex items-center gap-2 mb-1"><span className="text-xs font-black text-amber-400 tracking-wider">⚡ 도파민 지수</span><span className="text-sm font-black text-amber-300 italic">{(funScore/2).toFixed(1)}</span></div>
-                   <DopamineRating score={funScore} isEditing={isEditing} onChange={handleFunScoreChange} />
-                </div>
+                <HoneyJamToggle 
+                    isEditing={true} 
+                    isActive={isMyHoneyJam} 
+                    count={funCount} 
+                    onToggle={handleToggleHoneyJam}
+                />
               </div>
 
               <div className="pt-2 flex gap-2 hide-on-download">
-                 {isEditing ? (
-                    <>
-                        <button onClick={(e) => { e.stopPropagation(); setIsEditing(false); }} className="flex-1 py-3 bg-slate-800 text-slate-400 rounded-xl font-bold text-xs">취소</button>
-                        <button onClick={handleSubmit} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs shadow-lg">제출 완료!</button>
-                    </>
-                 ) : (
-                    <>
-                        <button onClick={(e) => { 
-                            e.stopPropagation(); 
-                            if(!auth.currentUser) alert('로그인 필요'); 
-                            else {
-                                setIsEditing(true);
-                                if (activeGameId === 'ALL') {
-                                    const firstGameId = sortedGames[0]?.id ? String(sortedGames[0].id) : '1';
-                                    setActiveGameId(firstGameId);
-                                }
-                            }
-                        }} className="flex-1 py-3 bg-white/5 border border-white/10 text-white rounded-xl font-black text-[10px] uppercase hover:bg-white/10">{hasParticipated ? '✏️ 수정' : '🫠 평점 등록'}</button>
-                        <Link href={`/match/${match.id}`} onClick={(e) => e.stopPropagation()} className="flex-1 py-3 bg-white/5 border border-white/10 text-cyan-300 rounded-xl font-bold text-[10px] uppercase hover:bg-white/10 flex items-center justify-center gap-1">💬 리뷰</Link>
-                        <button onClick={handleDownload} disabled={!isImagesReady} className="w-10 flex items-center justify-center bg-white/5 border border-white/10 rounded-xl">{isImagesReady ? '📷' : '⏳'}</button>
-                    </>
-                 )}
+                 <Link 
+                    href={`/match/${match.id}`} 
+                    onClick={(e) => e.stopPropagation()} 
+                    className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xs uppercase transition-all shadow-lg flex items-center justify-center gap-2"
+                 >
+                    나도 평점 & 리뷰 남기기
+                 </Link>
+                 <button onClick={handleDownload} disabled={!isImagesReady} className="w-12 flex items-center justify-center bg-white/5 border border-white/10 rounded-xl hover:bg-white/10">{isImagesReady ? '📷' : '⏳'}</button>
               </div>
             </div>
           </motion.div>
@@ -567,12 +580,74 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
   );
 }
 
-// ... (하위 컴포넌트들은 기존과 동일) ...
-function InteractiveBar({ score, align, color, onChange, disabled }: any) {
-  const barRef = useRef<HTMLDivElement>(null);
-  const update = useCallback((cx: number) => { if(!barRef.current || disabled) return; const rect = barRef.current.getBoundingClientRect(); let p = (cx - rect.left)/rect.width; if(align==='right') p=1-p; onChange(Math.round(Math.max(0,Math.min(1,p))*100)/10); }, [align, onChange, disabled]);
-  const handleStart = (e: any) => { if(disabled) { alert("상단의 Game 탭을 선택한 후 점수를 입력해주세요! (종합 탭에서는 입력 불가)"); return; } e.stopPropagation(); update(e.type.includes('touch')?e.touches[0].clientX:e.clientX); };
-  return ( <div ref={barRef} onMouseDown={handleStart} onTouchStart={handleStart} className={`flex-1 h-8 bg-slate-800 rounded-lg overflow-hidden relative flex items-center cursor-pointer ${align === 'left' ? 'justify-start' : 'justify-end'} ${disabled ? 'opacity-50 grayscale' : ''}`}> <div style={{ width: `${score * 10}%` }} className={`h-full ${color === 'red' ? 'bg-red-500' : 'bg-blue-500'} opacity-80 pointer-events-none`} /> <span className="absolute inset-0 flex items-center justify-center text-white font-black text-xs pointer-events-none">{score.toFixed(1)}</span> </div> );
+// ⭐ [수정] ResultBar - Slate(회색) 테마 추가
+function ResultBar({ score, align, theme }: any) { 
+    const hasData = score > 0; 
+    // 테마별 배경색 지정
+    const barColor = theme === 'red' ? 'bg-red-500' : (theme === 'blue' ? 'bg-blue-500' : 'bg-slate-600');
+    
+    return ( 
+        <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}`}> 
+            <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}> 
+                <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} className={`h-full ${hasData ? barColor : 'bg-transparent'}`} /> 
+            </div> 
+            <span className="text-[10px] font-black text-slate-500 w-6 text-center">{hasData ? score.toFixed(1) : '-'}</span> 
+        </div> 
+    ); 
 }
-function ResultBar({ score, align, theme }: any) { const hasData = score > 0; return ( <div className={`flex-1 flex items-center gap-2 ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}`}> <div className={`flex-1 h-2 bg-slate-800 rounded-full overflow-hidden flex ${align === 'left' ? 'justify-start' : 'justify-end'}`}> <motion.div initial={{ width: 0 }} animate={{ width: `${hasData ? score * 10 : 0}%` }} className={`h-full ${hasData ? (theme === 'red' ? 'bg-red-500' : 'bg-blue-500') : 'bg-transparent'}`} /> </div> <span className="text-[10px] font-black text-slate-500 w-6 text-center">{hasData ? score.toFixed(1) : '-'}</span> </div> ); }
-function DopamineRating({ score, isEditing, onChange }: any) { const starScore = score / 2; return ( <div className="flex gap-1.5 mt-2"> {[1, 2, 3, 4, 5].map((idx) => ( <div key={idx} className="relative w-6 h-6 cursor-pointer" onClick={(e) => { e.stopPropagation(); if(isEditing) onChange(idx * 2); }}> <svg viewBox="0 0 24 24" className="w-full h-full text-slate-800 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> {starScore >= idx && <svg viewBox="0 0 24 24" className="absolute top-0 left-0 w-full h-full text-amber-400 fill-current"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>} </div> ))} </div> ); }
+
+function HoneyJamToggle({ isEditing, isActive, count, onToggle }: any) {
+    if (!isEditing) {
+        return (
+            <div className="flex flex-col items-center justify-center py-2 gap-1">
+                <div className="flex items-center gap-2">
+                    <svg viewBox="0 0 24 24" className={`w-5 h-5 ${count > 0 ? 'text-red-500' : 'text-slate-600'}`} fill="currentColor">
+                        <path d="M2.3 15.8c-1.3-1.3-1.3-3.4 0-4.7l6.5-6.5c.3-.3.8-.5 1.3-.5H18c1.7 0 3 1.3 3 3v10c0 1.7-1.3 3-3 3H8.8c-.5 0-1-.2-1.3-.5l-5.2-5.2z"/>
+                    </svg>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Honey Jam Score</span>
+                </div>
+                <div className="text-3xl font-black italic tracking-tighter text-white">
+                    {count}<span className="text-sm text-slate-500 ml-1 font-bold not-italic">FISTS</span>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                    {count >= 50 ? "🔥 전설의 레전드 경기!" : count >= 10 ? "👍 꽤 재밌는 경기였어요" : "💤 아직 꿀잼 인증이 부족해요"}
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <button 
+            onClick={(e) => { e.stopPropagation(); if(isEditing && onToggle) onToggle(); }}
+            className={`w-full relative group overflow-hidden rounded-2xl border transition-all duration-300 ${
+                isActive 
+                ? 'bg-red-600 border-red-400 shadow-[0_0_20px_rgba(220,38,38,0.4)]' 
+                : 'bg-slate-800 border-slate-700 hover:bg-slate-700'
+            }`}
+        >
+            <div className="relative z-10 flex items-center justify-between px-6 py-4">
+                <div className="flex flex-col items-start text-left flex-1 mr-4">
+                    <span className={`text-lg font-black italic tracking-tighter transition-colors ${isActive ? 'text-white' : 'text-slate-300'}`}>
+                        {isActive ? "이 경기, 꿀잼 !" : "이 경기, 꿀잼 ?"}
+                    </span>
+                    <span className={`text-[11px] font-bold transition-colors mt-0.5 ${isActive ? 'text-red-200' : 'text-slate-500'}`}>
+                        {isActive ? "명경기 나왔다! 하이라이트 다시보기 추천!" : "도파민 터지는 경기였다면 HYPE!"}
+                    </span>
+                </div>
+                <div className="flex flex-col items-center justify-center gap-1">
+                    <div className={`transform transition-all duration-300 ${isActive ? 'scale-125 rotate-[-10deg]' : 'scale-100 opacity-30 grayscale'}`}>
+                        <svg viewBox="0 0 24 24" className="w-8 h-8 fill-current text-white drop-shadow-lg">
+                            <path d="M9.5 3.5a2.5 2.5 0 0 1 2.5 2.5v4h6a2.5 2.5 0 0 1 2.5 2.5v7a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 6 19.5v-13L9.5 3.5z"/> 
+                            <path d="M2 9a2 2 0 0 1 2-2h1v13H4a2 2 0 0 1-2-2V9z" />
+                        </svg>
+                    </div>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full transition-colors ${isActive ? 'bg-white/20 text-white' : 'bg-black/30 text-slate-400'}`}>
+                        🔥 {count}
+                    </span>
+                </div>
+            </div>
+            
+            {isActive && <div className="absolute inset-0 bg-gradient-to-r from-red-600 via-orange-500 to-red-600 opacity-50 blur-xl animate-pulse"></div>}
+        </button>
+    );
+}

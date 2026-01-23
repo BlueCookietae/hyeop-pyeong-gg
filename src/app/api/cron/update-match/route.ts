@@ -177,8 +177,8 @@ async function syncLiveAndRecentMatches() {
     await ensureAuth();
     
     const now = new Date();
-    const past = new Date(now.getTime() - 12 * 60 * 60 * 1000); // 12시간 전
-    const future = new Date(now.getTime() + 12 * 60 * 60 * 1000); // 12시간 후
+    const past = new Date(now.getTime() - 1 * 60 * 60 * 1000); // 1시간 전
+    const future = new Date(now.getTime() + 1 * 60 * 60 * 1000); // 1시간 후
     const rangeString = `${past.toISOString()},${future.toISOString()}`;
     
     console.log(`⏱️ Smart Cron Triggered: Checking range ${rangeString}`);

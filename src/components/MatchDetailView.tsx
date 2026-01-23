@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth, db } from "@/lib/firebase"; 
-import { doc, getDoc, collection, query, where, getDocs, setDoc, addDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, orderBy, limit, startAfter, runTransaction, onSnapshot, increment } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, getDocs, setDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, orderBy, limit, runTransaction, onSnapshot, increment } from "firebase/firestore";
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import Footer from '@/components/Footer';
 import * as htmlToImage from 'html-to-image'; 
@@ -57,8 +57,24 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
 
   const [liveMatchData, setLiveMatchData] = useState(matchData);
   const games = Array.isArray(liveMatchData.games) ? liveMatchData.games : [];
-  const displayGames = games.length > 0 ? games : [{ id: 1, position: 1 }]; 
+  
+  // ⭐ [수정] 1. Dynamic Game Tabs (HomeView와 동일 로직)
+  const sortedGames = [...games].sort((a: any, b: any) => a.position - b.position);
+  const visibleGames = sortedGames.filter((g: any, idx: number) => {
+      if (g.finished) return true;
+      if (idx === 0) return true;
+      if (sortedGames[idx - 1]?.finished) return true;
+      return false;
+  });
+  // 만약 게임 데이터가 아예 없으면 기본값
+  const displayGames = visibleGames.length > 0 ? visibleGames : [{ id: 1, position: 1 }];
+
   const [activeGameIndex, setActiveGameIndex] = useState(1); 
+  // activeGameIndex가 visibleGames 범위를 벗어나지 않도록 보정 (탭이 줄어들 수도 있으므로)
+  useEffect(() => {
+      if (activeGameIndex > displayGames.length) setActiveGameIndex(displayGames.length);
+  }, [displayGames.length]);
+
   const activeGameId = displayGames[activeGameIndex - 1]?.id || activeGameIndex;
 
   const [activePosIndex, setActivePosIndex] = useState(0); 
@@ -125,10 +141,8 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
   const currentTheme = getTeamTheme(selectedTeamSide);
   const currentPos = POSITIONS[activePosIndex];
 
-  // ⭐ 뒤로가기 로직 수정: 'expanded'를 제거하고 'focus' 파라미터 사용
-  // 이렇게 해야 홈 화면이 Detail View를 다시 렌더링하지 않고 List View를 보여줍니다.
   const handleGoBack = () => {
-      router.push(`/?expanded=${matchId}`);
+      router.push(`/?focus=${matchId}`); // focus param 사용
   };
 
   const handleRatingUpdate = (playerName: string, newScore: number) => {
@@ -150,15 +164,24 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
                 <div className="flex gap-1 overflow-x-auto no-scrollbar mask-gradient-r px-10">
                     {displayGames.map((g: any, idx: number) => {
                         const isActive = activeGameIndex === idx + 1;
+                        // ⭐ [수정] 5. 헤더 승리팀 로고 표시
+                        let winnerLogo = null;
+                        if (g.winner_id) {
+                            if (Number(g.winner_id) === Number(liveMatchData.home.id)) winnerLogo = liveMatchData.home.logo;
+                            else if (Number(g.winner_id) === Number(liveMatchData.away.id)) winnerLogo = liveMatchData.away.logo;
+                        }
+
                         return (
-                            <button key={g.id} onClick={() => setActiveGameIndex(idx + 1)} className="relative px-3 py-1 rounded-lg transition-all group shrink-0">
-                                <span className={`text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'}`}>Game {idx + 1}</span>
+                            <button key={g.id} onClick={() => setActiveGameIndex(idx + 1)} className="relative px-3 py-1 rounded-lg transition-all group shrink-0 flex items-center gap-1">
+                                <span className={`text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'}`}>Game {g.position}</span>
+                                {winnerLogo && <img src={getProxiedImageUrl(winnerLogo)} className="w-3 h-3 object-contain" alt="win" />}
                                 {isActive && <motion.div layoutId="activeTab" className="absolute bottom-0 inset-x-3 h-0.5 bg-cyan-400 rounded-full" />}
                             </button>
                         )
                     })}
                 </div>
             </div>
+            {/* Team Score Header (Existing) */}
             <div className="flex items-center justify-between px-4 py-1.5">
                 <button onClick={() => setSelectedTeamSide('home')} className={`flex items-center gap-2 transition-all duration-300 ${selectedTeamSide === 'home' ? 'opacity-100' : 'opacity-40 grayscale'}`}>
                     <img src={getProxiedImageUrl(liveMatchData.home.logo)} className="w-8 h-8 object-contain drop-shadow-[0_0_8px_rgba(255,255,255,0.6)]" />
@@ -198,7 +221,7 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
                     pos={currentPos}
                     matchId={matchId}
                     gameId={activeGameId}
-                    gameIndex={activeGameIndex}
+                    gameIndex={activeGameIndex} // Pass index for title
                     matchData={liveMatchData}
                     homePlayers={initialRosters.home[currentPos] || []}
                     awayPlayers={initialRosters.away[currentPos] || []}
@@ -232,16 +255,22 @@ function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlaye
     const currentGameData = matchData.games?.find((g: any) => String(g.id) === String(gameId));
     const serverPinnedId = currentGameData?.active_players?.[pinnedKey];
 
+    // ⭐ [수정] 3. 우선순위: User Selection > Server Pin > Default(0번=주전)
     let activeIdx = 0;
-    if (userSelection[selectionKey] !== undefined) activeIdx = userSelection[selectionKey];
-    else if (serverPinnedId) {
+    if (userSelection[selectionKey] !== undefined) {
+        activeIdx = userSelection[selectionKey];
+    } else if (serverPinnedId) {
         const pinnedIdx = players.findIndex((p: any) => String(p.id) === String(serverPinnedId));
         if (pinnedIdx !== -1) activeIdx = pinnedIdx;
-    }
+    } 
+    // Default 0 (이미 rosters 데이터가 주전 우선으로 정렬되어 있다고 가정)
 
-    const [isExpanded, setIsExpanded] = useState(!isMulti || userSelection[selectionKey] !== undefined || serverPinnedId); 
     const activePlayer = players[activeIdx] || { name: 'Unknown', id: 0 };
     
+    // ⭐ [수정] 2. 기본 상태를 '펼침(true)'으로 변경
+    // 사용자가 선택을 안 했더라도 주전 카드가 먼저 보이게 함
+    const [isExpanded, setIsExpanded] = useState(true);
+
     const oppPinnedKey = `pinned_${selectedSide === 'home' ? 'away' : 'home'}_${pos}`;
     const oppPinnedId = currentGameData?.active_players?.[oppPinnedKey];
     const oppIdx = oppPinnedId ? opponentPlayers.findIndex((p: any) => String(p.id) === String(oppPinnedId)) : 0;
@@ -254,14 +283,14 @@ function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlaye
 
     const handleSelectPlayer = (idx: number) => {
         setUserSelection((prev: any) => ({ ...prev, [selectionKey]: idx }));
-        setIsExpanded(true);
+        setIsExpanded(true); // 선택하면 다시 카드로 펼침
     };
 
     const user = auth.currentUser;
     const isAdmin = user && user.email && ADMIN_EMAILS.includes(user.email);
 
     const handleAdminPin = async () => {
-        if (!confirm(`'${activePlayer.name}' 선수를 고정하시겠습니까?`)) return;
+        if (!confirm(`'${activePlayer.name}' 선수를 이 게임의 주전으로 고정하시겠습니까?`)) return;
         try {
             await runTransaction(db, async (transaction) => {
                 const matchRef = doc(db, "artifacts", APP_ID, 'public', 'data', 'matches', String(matchId));
@@ -280,18 +309,22 @@ function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlaye
         } catch(e) { console.error(e); alert("고정 실패"); }
     };
 
+    // 탭이나 포지션이 바뀌면 다시 카드로 리셋
     useEffect(() => { 
-        if (isMulti && userSelection[selectionKey] === undefined && !serverPinnedId) setIsExpanded(false); 
-        else setIsExpanded(true);
-    }, [selectedSide, isMulti, gameId]);
+        setIsExpanded(true); 
+    }, [selectedSide, gameId, pos]);
 
     const currentMyScore = myRatings[activePlayer.name] || 0;
     const opponentAvg = getAvg(opponentPlayer.name);
 
+    // ⭐ [수정] 4. 교체 버튼 표시 여부 (Admin Pin이 없을 때만 보임)
+    const showChangeButton = isMulti && !serverPinnedId;
+
     return (
         <div className="space-y-4">
+            {/* List View (교체 모드) */}
             {isMulti && !isExpanded && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 animate-fade-in-down">
                     {players.map((p: any, idx: number) => (
                         <div key={p.id} onClick={() => handleSelectPlayer(idx)} className="bg-white/10 backdrop-blur-md border border-white/10 p-4 rounded-2xl flex items-center gap-3 cursor-pointer hover:border-cyan-500/50 hover:bg-white/20 transition-all">
                             <img src={getProxiedImageUrl(p.image)} className="w-10 h-10 rounded-full bg-black/50 object-cover" />
@@ -301,15 +334,26 @@ function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlaye
                 </div>
             )}
 
+            {/* Card View (메인) */}
             {isExpanded && (
                 <div className="relative">
+                    {/* Admin Pin or Change Button */}
                     <div className="flex justify-end items-center gap-2 mb-2 mr-2">
-                        {isAdmin && isMulti && <button onClick={handleAdminPin} className="text-[10px] text-amber-400 font-bold bg-amber-950/40 px-2 py-1 rounded-full border border-amber-500/30">📌 고정</button>}
-                        {isMulti && <button onClick={() => setIsExpanded(false)} className="text-[10px] text-cyan-400 font-bold hover:underline flex items-center gap-1 bg-cyan-950/40 px-3 py-1 rounded-full border border-cyan-500/30 shadow-lg"><span>Change Player</span> ↺</button>}
+                        {isAdmin && isMulti && (
+                            <button onClick={handleAdminPin} className={`text-[10px] font-bold px-2 py-1 rounded-full border ${serverPinnedId === activePlayer.id ? 'bg-amber-500 text-black border-amber-500' : 'bg-amber-950/40 text-amber-400 border-amber-500/30'}`}>
+                                {serverPinnedId === activePlayer.id ? '📌 FIXED' : '📌 고정하기'}
+                            </button>
+                        )}
+                        {/* ⭐ [수정] Pin 안 된 경우에만 Change 버튼 노출 */}
+                        {showChangeButton && (
+                            <button onClick={() => setIsExpanded(false)} className="text-[10px] text-cyan-400 font-bold hover:underline flex items-center gap-1 bg-cyan-950/40 px-3 py-1 rounded-full border border-cyan-500/30 shadow-lg">
+                                <span>Change Player</span> ↺
+                            </button>
+                        )}
                     </div>
                     
                     <ExpandedCard 
-                        matchId={matchId} gameId={gameId} gameIndex={gameIndex} pos={pos}
+                        matchId={matchId} gameId={gameId} gameIndex={currentGameData?.position || gameIndex} pos={pos}
                         mainPlayer={activePlayer} subPlayer={opponentPlayer} mainTeam={teamData} subTeam={opponentTeamData}
                         theme={cardTheme} avgRating={getAvg(activePlayer.name)} opponentAvg={opponentAvg} 
                         myScore={currentMyScore}
@@ -467,7 +511,6 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
                 <div className="absolute inset-0 pointer-events-none"><div className={`h-full transition-all duration-100 ${barColor}`} style={{ width: `${score * 10}%` }} /></div>
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><span className="text-white font-black text-lg italic drop-shadow-md">{score.toFixed(1)}</span></div>
             </div>
-            {/* ⭐ Updated Button Style: Gray Background */}
             <button onClick={handleSave} disabled={status === 'SAVING' || status === 'DONE'} className={`w-16 h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center ${status === 'DONE' ? 'bg-white/10 text-green-400' : 'bg-white/10 text-white hover:bg-white/20 active:scale-95 disabled:opacity-50'}`}>
                 {status === 'SAVING' ? '...' : (status === 'DONE' ? '완료' : '등록')}
             </button>
@@ -475,9 +518,8 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
     );
 }
 
-// ----------------------------------------------------------------------
-// Comment Section
-// ----------------------------------------------------------------------
+// Comment Section components (CommentSection, CommentItem) remain same as previous
+// Copy them here...
 function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, refreshTrigger, opponentAvg, teamTheme }: any) {
   const [recentComments, setRecentComments] = useState<any[]>([]);
   const [bestComments, setBestComments] = useState<any[]>([]);

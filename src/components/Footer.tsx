@@ -28,14 +28,14 @@ export default function Footer() {
 
         {/* 2. 쿠팡 파트너스 */}
         <div className="bg-slate-900/50 p-5 rounded-3xl border border-slate-800 text-[10px] text-slate-500 leading-relaxed">
-          <p className="mb-2 font-bold text-slate-400">🔥 롤붕이 필수템 추천</p>
+          <p className="mb-2 font-bold text-slate-400">롤붕이 필수템 추천</p>
           <a 
-            href="https://link.coupang.com/..." // ⭐ 쿠팡 파트너스 링크
+            href="https://link.coupang.com/a/dys50w" // ⭐ 쿠팡 파트너스 링크
             target="_blank"
             rel="noreferrer" 
             className="block text-slate-400 hover:text-white underline decoration-slate-700 hover:decoration-white transition-colors text-xs"
           >
-            "대상혁이 쓴다는 그 마우스, 최저가 확인하기"
+            "대상혁이 쓴다는 바로 그 마우스, 최저가 보기"
           </a>
           <p className="mt-3 text-[9px] text-slate-700">
             이 포스팅은 쿠팡 파트너스 활동의 일환으로,<br/>이에 따른 일정액의 수수료를 제공받습니다.
@@ -48,10 +48,10 @@ export default function Footer() {
           <div className="mb-4">
             <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Contact / Bug Report</span>
             <a 
-              href="mailto:ggt3944@gmail.com" 
+              href="mailto:hyeoppyeong.official@gmail.com" 
               className="block mt-1 text-xs text-slate-500 hover:text-cyan-400 transition-colors font-medium"
             >
-              ggt3944@gmail.com
+              hyeoppyeong.official@gmail.com
             </a>
           </div>
 
