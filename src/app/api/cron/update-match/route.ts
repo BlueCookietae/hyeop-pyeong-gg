@@ -172,23 +172,36 @@ async function syncMatchData() {
 }
 
 // --- [기능 3] 스마트 동기화 (NEW: Cron Job 전용) ---
-// 현재 시간 기준 ±12시간 내의 경기만 업데이트하여 API 호출을 아끼고, 실시간성을 확보함
+// 1) 현재 진행 중인 경기(running) + 2) ±1시간 범위 경기를 합쳐서 업데이트
 async function syncLiveAndRecentMatches() {
     await ensureAuth();
-    
+
     const now = new Date();
     const past = new Date(now.getTime() - 1 * 60 * 60 * 1000); // 1시간 전
     const future = new Date(now.getTime() + 1 * 60 * 60 * 1000); // 1시간 후
     const rangeString = `${past.toISOString()},${future.toISOString()}`;
-    
+
     console.log(`⏱️ Smart Cron Triggered: Checking range ${rangeString}`);
 
-    // 범위 필터 적용
-    const url = `https://api.pandascore.co/lol/matches?filter[league_id]=293&range[begin_at]=${rangeString}&sort=begin_at`;
-    const matches = await fetchPanda(url);
+    // 1) 현재 진행 중인 경기 (시작 시간 관계없이 항상 가져옴)
+    const runningUrl = `https://api.pandascore.co/lol/matches?filter[league_id]=293&filter[status]=running&sort=begin_at`;
+    const runningMatches = await fetchPanda(runningUrl);
+    console.log(`🟢 Running matches: ${runningMatches.length}`);
+
+    // 2) ±1시간 범위 경기 (곧 시작하거나 막 끝난 경기)
+    const rangeUrl = `https://api.pandascore.co/lol/matches?filter[league_id]=293&range[begin_at]=${rangeString}&sort=begin_at`;
+    const rangeMatches = await fetchPanda(rangeUrl);
+    console.log(`📅 Range matches: ${rangeMatches.length}`);
+
+    // 중복 제거 후 합치기
+    const matchMap = new Map<number, any>();
+    for (const m of [...runningMatches, ...rangeMatches]) {
+        matchMap.set(m.id, m);
+    }
+    const matches = Array.from(matchMap.values());
 
     if (matches.length === 0) {
-        console.log("💤 No active/recent matches found within range.");
+        console.log("💤 No active/recent matches found.");
         return { success: true, count: 0, message: "No active matches nearby" };
     }
 
@@ -198,7 +211,7 @@ async function syncLiveAndRecentMatches() {
         if (saved) count++;
     }
 
-    return { success: true, count, message: `Smart Sync: Updated ${count} matches` };
+    return { success: true, count, message: `Smart Sync: Updated ${count} matches (${runningMatches.length} running + ${rangeMatches.length} range)` };
 }
 
 
