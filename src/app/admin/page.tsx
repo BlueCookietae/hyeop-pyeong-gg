@@ -24,10 +24,12 @@ export default function AdminPage() {
   
   const [isSyncing, setIsSyncing] = useState(false);
   const [inspectId, setInspectId] = useState('');
-  const [inspectType, setInspectType] = useState('team'); 
+  const [inspectType, setInspectType] = useState('team');
   const [inspectResult, setInspectResult] = useState<string>('');
   const [isInspecting, setIsInspecting] = useState(false);
   const [syncInput, setSyncInput] = useState('');
+  const [tournamentLeagueId, setTournamentLeagueId] = useState('');
+  const [isSyncingTournament, setIsSyncingTournament] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -89,6 +91,19 @@ export default function AdminPage() {
     finally { setIsSyncing(false); }
   };
 
+  const handleSyncTournament = async () => {
+    if (!tournamentLeagueId) return alert("League ID를 입력하세요.");
+    if (!confirm(`리그 ID ${tournamentLeagueId}의 국제전 경기를 동기화합니다.`)) return;
+    setIsSyncingTournament(true);
+    try {
+      const res = await fetch(`/api/cron/update-match?mode=sync_tournament&id=${encodeURIComponent(tournamentLeagueId)}`);
+      const data = await res.json();
+      if (data.success) alert(`✅ ${data.count}개 경기 동기화 완료! (league: ${data.leagueId})`);
+      else alert(`실패: ${data.error}`);
+    } catch (e: any) { alert(e.message); }
+    finally { setIsSyncingTournament(false); }
+  };
+
   const handleInspect = async () => {
     if (!inspectId) return alert("ID 입력");
     setIsInspecting(true);
@@ -139,11 +154,19 @@ export default function AdminPage() {
                 <div className="flex-1 bg-black/30 rounded-xl p-4 border border-slate-800/50">
                     <h3 className="text-[10px] font-bold text-amber-500 mb-3 uppercase flex items-center gap-2"><span>🔍 PandaScore Inspector</span>{isInspecting && <span className="animate-spin">⏳</span>}</h3>
                     <div className="flex gap-2 mb-3">
-                        <select value={inspectType} onChange={e => setInspectType(e.target.value)} className="bg-slate-800 text-xs px-3 py-2 rounded-lg border border-slate-700 outline-none focus:border-cyan-500"><option value="team">Team ID</option><option value="match">Match ID</option></select>
+                        <select value={inspectType} onChange={e => setInspectType(e.target.value)} className="bg-slate-800 text-xs px-3 py-2 rounded-lg border border-slate-700 outline-none focus:border-cyan-500"><option value="team">Team ID</option><option value="match">Match ID</option><option value="league">League Name</option></select>
                         <input value={inspectId} onChange={e => setInspectId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleInspect()} placeholder="Search ID..." className="flex-1 bg-slate-950 px-3 py-2 text-xs rounded-lg border border-slate-700 outline-none focus:border-cyan-500" />
                         <button onClick={handleInspect} disabled={isInspecting} className="bg-slate-700 px-4 py-2 rounded-lg text-xs font-bold hover:bg-amber-600 hover:text-white transition-colors">GO</button>
                     </div>
                     <pre className="bg-slate-950 p-3 rounded-lg text-[10px] text-green-400 h-40 overflow-auto font-mono border border-slate-800/50 no-scrollbar">{inspectResult || '// Result will appear here...'}</pre>
+                </div>
+                <div className="mt-3 bg-black/30 rounded-xl p-4 border border-slate-800/50">
+                    <h3 className="text-[10px] font-bold text-purple-400 mb-3 uppercase">🌏 Sync Tournament (국제전 과거 경기)</h3>
+                    <div className="flex gap-2">
+                        <input value={tournamentLeagueId} onChange={e => setTournamentLeagueId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSyncTournament()} placeholder="League ID (e.g. 5 for Worlds)" className="flex-1 bg-slate-950 px-3 py-2 text-xs rounded-lg border border-slate-700 outline-none focus:border-purple-500" />
+                        <button onClick={handleSyncTournament} disabled={isSyncingTournament} className="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors">{isSyncingTournament ? '...' : 'SYNC'}</button>
+                    </div>
+                    <p className="text-[9px] text-slate-600 mt-2">Inspector에서 League Name 검색 후 league_id 확인 → 여기서 동기화</p>
                 </div>
             </div>
 

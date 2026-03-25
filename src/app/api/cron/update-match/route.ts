@@ -263,6 +263,8 @@ export async function GET(request: Request) {
             else if (inspectType === 'team') {
                 if (!isNaN(Number(inspectId))) url = `https://api.pandascore.co/lol/teams/${inspectId}`;
                 else url = `https://api.pandascore.co/lol/teams?search[name]=${encodeURIComponent(inspectId)}`;
+            } else if (inspectType === 'league') {
+                url = `https://api.pandascore.co/lol/leagues?search[name]=${encodeURIComponent(inspectId)}&per_page=20`;
             }
             const data = await fetchPanda(url);
             return NextResponse.json(data);
