@@ -1,22 +1,17 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation'; 
+import React, { useState, useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import LoginButton from '@/components/LoginButton';
-import { db, auth } from '@/lib/firebase';
-import { collection, query, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
-import * as htmlToImage from 'html-to-image'; 
+import * as htmlToImage from 'html-to-image';
 import Link from 'next/link';
-
-const APP_ID = 'lck-2026-app';
-const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
-const FUN_KEY = 'match_fun_score'; 
-
-const POS_ICONS: Record<string, string> = {
-  'TOP': '/icons/top.png', 'JGL': '/icons/jungle.png', 'MID': '/icons/middle.png', 'ADC': '/icons/bottom.png', 'SUP': '/icons/support.png'
-};
+import { APP_ID, POSITIONS, FUN_KEY, POS_ICONS } from '@/constants/config';
+import { useAuthStore } from '@/stores/authStore';
+import type { Match, Player, RosterMap, MatchStats, CardTheme } from '@/types';
 
 // ... Utility functions ...
 const dataURItoBlob = (dataURI: string) => {
@@ -65,11 +60,11 @@ const animateScrollTo = (to: number, duration: number = 800) => {
   requestAnimationFrame(animateScroll);
 };
 
-export default function HomeView({ initialMatches, initialRosters }: { initialMatches: any[], initialRosters: any }) {
+export default function HomeView({ initialMatches, initialRosters }: { initialMatches: Match[], initialRosters: Record<number, RosterMap> }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [allMatches, setAllMatches] = useState<any[]>(initialMatches || []);
+  const [allMatches, setAllMatches] = useState<Match[]>(initialMatches || []);
   const [currentTab, setCurrentTab] = useState(1);
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
   
@@ -135,7 +130,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     }
   };
 
-  const handleStatsUpdate = (matchId: string, newStats: any) => {
+  const handleStatsUpdate = (matchId: string, newStats: MatchStats) => {
       setAllMatches(prev => prev.map(m => String(m.id) === String(matchId) ? { ...m, stats: newStats } : m));
   };
 
@@ -230,12 +225,26 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   );
 }
 
-function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, lastClickedId, onToggle, onRestoreComplete, onStatsUpdate }: any) {
+interface MatchCardProps {
+  match: Match;
+  rosters: Record<number, RosterMap>;
+  isOpen: boolean;
+  isTarget: boolean;
+  isClicked: boolean;
+  isFocused: boolean;
+  lastClickedId: string | null;
+  onToggle: (isOpenNow: boolean) => void;
+  onRestoreComplete: () => void;
+  onStatsUpdate: (matchId: string, newStats: MatchStats) => void;
+}
+
+function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, lastClickedId, onToggle, onRestoreComplete, onStatsUpdate }: MatchCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
+  const { user } = useAuthStore();
 
   const [activeGameId, setActiveGameId] = useState<string>('ALL');
-  const currentStats = match.stats || {};
+  const currentStats: MatchStats = match.stats || { games: {}, total: {} };
 
   const [isMyHoneyJam, setIsMyHoneyJam] = useState(false);
   const [isLoadingFun, setIsLoadingFun] = useState(false);
@@ -264,7 +273,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
 
   const getPlayerName = (teamId: number, pos: string, targetGameId: string) => {
     const teamRosterMap = rosters[teamId] || {};
-    const players = teamRosterMap[pos]; 
+    const players = (teamRosterMap as Record<string, Player[]>)[pos];
 
     if (!Array.isArray(players) || players.length === 0) return 'SUB';
 
@@ -318,7 +327,6 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
   useEffect(() => {
     if (isOpen || isFocused) { 
       const fetchMyRating = async () => {
-        const user = auth.currentUser;
         if (!user) return;
         const docId = `${user.uid}_${match.id}`;
         try {
@@ -348,7 +356,6 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
   }, [isOpen, isTarget, isClicked, isFocused, lastClickedId, match.id, onRestoreComplete]);
 
   const handleToggleHoneyJam = async () => {
-      const user = auth.currentUser;
       if (!user) return alert("로그인이 필요합니다.");
       if (isLoadingFun) return;
 
@@ -395,7 +402,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               return newStats;
           });
 
-          if (newStats) onStatsUpdate(match.id, newStats);
+          if (newStats) onStatsUpdate(String(match.id), newStats);
 
       } catch (e: any) {
           console.error(e);
@@ -526,7 +533,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
                     const aScore = getScore(ap); 
                     
                     // ⭐ [수정] 컬러 코딩 로직 (데이터 O -> 상대평가, 데이터 X -> 결과따라)
-                    let hColor = 'slate', aColor = 'slate';
+                    let hColor: CardTheme = 'slate', aColor: CardTheme = 'slate';
                     
                     if (hScore > 0 && aScore > 0) {
                         // 둘 다 점수 있음 -> 상대평가
@@ -581,7 +588,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
 }
 
 // ⭐ [수정] ResultBar - Slate(회색) 테마 추가
-function ResultBar({ score, align, theme }: any) { 
+function ResultBar({ score, align, theme }: { score: number; align: 'left' | 'right'; theme: 'red' | 'blue' | 'slate' }) {
     const hasData = score > 0; 
     // 테마별 배경색 지정
     const barColor = theme === 'red' ? 'bg-red-500' : (theme === 'blue' ? 'bg-blue-500' : 'bg-slate-600');
@@ -596,7 +603,7 @@ function ResultBar({ score, align, theme }: any) {
     ); 
 }
 
-function HoneyJamToggle({ isEditing, isActive, count, onToggle }: any) {
+function HoneyJamToggle({ isEditing, isActive, count, onToggle }: { isEditing: boolean; isActive: boolean; count: number; onToggle?: () => void }) {
     if (!isEditing) {
         return (
             <div className="flex flex-col items-center justify-center py-2 gap-1">

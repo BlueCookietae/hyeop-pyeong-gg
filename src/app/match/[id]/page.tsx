@@ -1,10 +1,11 @@
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore'; 
+import { doc, getDoc } from 'firebase/firestore';
 import MatchDetailView from '@/components/MatchDetailView';
-import { serializeData, getRosterMap } from '@/lib/lck-utils'; // ⭐ 공통 모듈 사용
+import { serializeData, getRosterMap } from '@/lib/lck-utils';
+import { APP_ID } from '@/constants/config';
+import type { Match } from '@/types';
 
-export const revalidate = 60; 
-const APP_ID = 'lck-2026-app';
+export const revalidate = 60;
 
 export default async function MatchPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -14,7 +15,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
     if (!matchSnap.exists()) return <div className="min-h-screen bg-[#0a0a0c] text-white flex items-center justify-center">Match not found</div>;
 
     const safeData = serializeData(matchSnap.data());
-    const matchData = { id: matchSnap.id, ...safeData };
+    const matchData = { id: matchSnap.id, ...safeData } as Match;
 
     // 팀 데이터 가져오기
     const [hSnap, aSnap] = await Promise.all([

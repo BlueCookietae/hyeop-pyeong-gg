@@ -2,19 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { auth, db } from "@/lib/firebase"; 
+import { db } from "@/lib/firebase";
 import { doc, getDoc, collection, query, where, getDocs, setDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, orderBy, limit, runTransaction, onSnapshot, increment } from "firebase/firestore";
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import Footer from '@/components/Footer';
-import * as htmlToImage from 'html-to-image'; 
-
-const APP_ID = 'lck-2026-app';
-const POSITIONS = ['TOP', 'JGL', 'MID', 'ADC', 'SUP'];
-const ADMIN_EMAILS = ['ggt3944@gmail.com', 'hyeoppyeong.official@gmail.com']; 
-
-const POS_ICONS: Record<string, string> = {
-  'TOP': '/icons/top.png', 'JGL': '/icons/jungle.png', 'MID': '/icons/middle.png', 'ADC': '/icons/bottom.png', 'SUP': '/icons/support.png'
-};
+import * as htmlToImage from 'html-to-image';
+import { APP_ID, POSITIONS, POS_ICONS } from '@/constants/config';
+import { useAuthStore } from '@/stores/authStore';
+import type { Match, Player, RosterMap, MatchStats, GameStats, CardTheme, TeamSide, Comment } from '@/types';
 
 // Icons
 const ShareIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>);
@@ -35,7 +30,7 @@ const dataURItoBlob = (dataURI: string) => {
   return new Blob([ab], { type: mimeString });
 };
 
-const getProxiedImageUrl = (url: string) => {
+const getProxiedImageUrl = (url: string | null | undefined): string => {
   if (!url) return "";
   if (url.includes('wsrv.nl') || url.startsWith('data:') || url.startsWith('/')) return url;
   const cleanUrl = url.replace(/^https?:\/\//, '');
@@ -43,19 +38,20 @@ const getProxiedImageUrl = (url: string) => {
 };
 
 interface Props {
-  matchData: any;
-  initialRosters: { home: Record<string, any[]>, away: Record<string, any[]> };
-  initialAvgRatings: any; 
-  initialComments: any[];
+  matchData: Match;
+  initialRosters: { home: RosterMap; away: RosterMap };
+  initialAvgRatings: Record<string, GameStats>;
+  initialComments: Comment[];
 }
 
 export default function MatchDetailView({ matchData, initialRosters }: Props) {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => setIsMounted(true), []);
   const router = useRouter();
+  const { user } = useAuthStore();
   const matchId = String(matchData.id);
 
-  const [liveMatchData, setLiveMatchData] = useState(matchData);
+  const [liveMatchData, setLiveMatchData] = useState<Match>(matchData);
   const games = Array.isArray(liveMatchData.games) ? liveMatchData.games : [];
   
   // ⭐ [수정] 1. Dynamic Game Tabs (HomeView와 동일 로직)
@@ -67,7 +63,7 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
       return false;
   });
   // 만약 게임 데이터가 아예 없으면 기본값
-  const displayGames = visibleGames.length > 0 ? visibleGames : [{ id: 1, position: 1 }];
+  const displayGames = visibleGames.length > 0 ? visibleGames : [{ id: 1, position: 1, finished: false }];
 
   const [activeGameIndex, setActiveGameIndex] = useState(1); 
   // activeGameIndex가 visibleGames 범위를 벗어나지 않도록 보정 (탭이 줄어들 수도 있으므로)
@@ -81,7 +77,7 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
   const [selectedTeamSide, setSelectedTeamSide] = useState<'home' | 'away'>('home'); 
   const [userSelection, setUserSelection] = useState<Record<string, number>>({});
 
-  const [stats, setStats] = useState(matchData.stats || { games: {}, total: {} });
+  const [stats, setStats] = useState<MatchStats>(matchData.stats || { games: {}, total: {} });
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -90,7 +86,7 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
           if (doc.exists()) {
               const data = doc.data();
               setStats(data.stats || { games: {}, total: {} });
-              setLiveMatchData({ ...data, id: doc.id });
+              setLiveMatchData({ ...data, id: doc.id } as Match);
           }
       });
       return () => unsub();
@@ -99,7 +95,6 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
   useEffect(() => {
      if (!isMounted) return;
      const fetchMyData = async () => {
-        const user = auth.currentUser;
         if (user) {
           try {
             const snap = await getDoc(doc(db, "matchRatings", `${user.uid}_${matchId}`));
@@ -242,7 +237,25 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
   );
 }
 
-function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlayers, awayPlayers, selectedSide, cardTheme, gameStats, myRatings, onRatingUpdate, userSelection, setUserSelection, refreshTrigger }: any) {
+interface PositionSectionProps {
+  pos: string;
+  matchId: string;
+  gameId: string | number;
+  gameIndex: number;
+  matchData: Match;
+  homePlayers: Player[];
+  awayPlayers: Player[];
+  selectedSide: TeamSide;
+  cardTheme: CardTheme;
+  gameStats: GameStats;
+  myRatings: Record<string, number>;
+  onRatingUpdate: (playerName: string, score: number) => void;
+  userSelection: Record<string, number>;
+  setUserSelection: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  refreshTrigger: number;
+}
+
+function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlayers, awayPlayers, selectedSide, cardTheme, gameStats, myRatings, onRatingUpdate, userSelection, setUserSelection, refreshTrigger }: PositionSectionProps) {
     const players = selectedSide === 'home' ? homePlayers : awayPlayers;
     const opponentPlayers = selectedSide === 'home' ? awayPlayers : homePlayers;
     const teamData = selectedSide === 'home' ? matchData.home : matchData.away;
@@ -286,8 +299,7 @@ function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlaye
         setIsExpanded(true); // 선택하면 다시 카드로 펼침
     };
 
-    const user = auth.currentUser;
-    const isAdmin = user && user.email && ADMIN_EMAILS.includes(user.email);
+    const { user, isAdmin } = useAuthStore();
 
     const handleAdminPin = async () => {
         if (!confirm(`'${activePlayer.name}' 선수를 이 게임의 주전으로 고정하시겠습니까?`)) return;
@@ -366,16 +378,33 @@ function PositionSection({ pos, matchId, gameId, gameIndex, matchData, homePlaye
     );
 }
 
-function ExpandedCard({ matchId, gameId, gameIndex, pos, mainPlayer, subPlayer, mainTeam, subTeam, theme, avgRating, opponentAvg, myScore, onUpdateMyRating, refreshTrigger }: any) {
+interface ExpandedCardProps {
+  matchId: string;
+  gameId: string | number;
+  gameIndex: number;
+  pos: string;
+  mainPlayer: Player;
+  subPlayer: Player;
+  mainTeam: { code: string };
+  subTeam: { code: string };
+  theme: CardTheme;
+  avgRating: number;
+  opponentAvg: number;
+  myScore: number;
+  onUpdateMyRating: (playerName: string, score: number) => void;
+  refreshTrigger: number;
+}
+
+function ExpandedCard({ matchId, gameId, gameIndex, pos, mainPlayer, subPlayer, mainTeam, subTeam, theme, avgRating, opponentAvg, myScore, onUpdateMyRating, refreshTrigger }: ExpandedCardProps) {
     const cardRef = useRef<HTMLDivElement>(null);
 
-    let comparisonColor = 'blue'; 
+    let comparisonColor: CardTheme = 'blue';
     if (avgRating > 0 && opponentAvg > 0) comparisonColor = avgRating >= opponentAvg ? 'red' : 'blue';
     else comparisonColor = theme === 'red' ? 'red' : 'blue';
 
     const badgeStyle = comparisonColor === 'red' ? 'bg-red-500 text-white shadow-red-500/40' : (comparisonColor === 'blue' ? 'bg-blue-500 text-white shadow-blue-500/40' : 'bg-slate-700 text-slate-300');
-    
-    let oppCompColor = 'slate';
+
+    let oppCompColor: CardTheme = 'slate';
     if (avgRating > 0 && opponentAvg > 0) oppCompColor = opponentAvg > avgRating ? 'red' : 'blue';
     const oppBadgeStyle = oppCompColor === 'red' ? 'bg-red-500 text-white' : (oppCompColor === 'blue' ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-300');
 
@@ -451,7 +480,18 @@ function ExpandedCard({ matchId, gameId, gameIndex, pos, mainPlayer, subPlayer, 
     );
 }
 
-function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore, onUpdate, theme }: any) {
+interface SimpleRatingBarProps {
+  matchId: string;
+  gameId: string | number;
+  gameIndex: number;
+  playerName: string;
+  initialScore: number;
+  onUpdate: (playerName: string, score: number) => void;
+  theme: CardTheme;
+}
+
+function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore, onUpdate, theme }: SimpleRatingBarProps) {
+    const { user } = useAuthStore();
     const [score, setScore] = useState(0.0);
     const [status, setStatus] = useState<'IDLE' | 'SAVING' | 'DONE'>('IDLE');
     useEffect(() => { 
@@ -460,7 +500,6 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
     }, [initialScore, playerName, gameId]);
 
     const handleSave = async () => {
-        const user = auth.currentUser;
         if (!user) return alert("로그인이 필요합니다.");
         setStatus('SAVING');
         try {
@@ -520,24 +559,35 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
 
 // Comment Section components (CommentSection, CommentItem) remain same as previous
 // Copy them here...
-function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, refreshTrigger, opponentAvg, teamTheme }: any) {
-  const [recentComments, setRecentComments] = useState<any[]>([]);
-  const [bestComments, setBestComments] = useState<any[]>([]);
-  const [limitCount, setLimitCount] = useState(5); 
+interface CommentSectionProps {
+  matchId: string;
+  gameId: string | number;
+  gameIndex: number;
+  playerName: string;
+  userRating: number;
+  refreshTrigger: number;
+  opponentAvg: number;
+  teamTheme: CardTheme;
+}
+
+function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, refreshTrigger, opponentAvg, teamTheme }: CommentSectionProps) {
+  const { user } = useAuthStore();
+  const [recentComments, setRecentComments] = useState<Comment[]>([]);
+  const [bestComments, setBestComments] = useState<Comment[]>([]);
+  const [limitCount, setLimitCount] = useState(5);
   const [inputVal, setInputVal] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null); 
-  const user = auth.currentUser;
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
       const q = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("likes", "desc"), limit(3));
-      getDocs(q).then(snap => setBestComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(c => c.likes > 0))).catch(e => console.log("Index needed?", e));
+      getDocs(q).then(snap => setBestComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Comment)).filter(c => c.likes > 0))).catch(e => console.log("Index needed?", e));
   }, [matchId, gameId, playerName, refreshTrigger]);
 
   useEffect(() => {
       const q = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("createdAt", "desc"), limit(limitCount));
-      getDocs(q).then(snap => setRecentComments(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+      getDocs(q).then(snap => setRecentComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Comment))));
   }, [matchId, gameId, playerName, refreshTrigger, limitCount]);
 
   const hasRated = userRating > 0;
@@ -560,7 +610,7 @@ function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, re
           setIsEditing(false); 
           setLimitCount(5); 
           const q = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("createdAt", "desc"), limit(limitCount));
-          getDocs(q).then(snap => setRecentComments(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+          getDocs(q).then(snap => setRecentComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Comment))));
       } catch (e) { console.error(e); alert("등록 실패"); } finally { setIsSubmitting(false); }
   };
 
@@ -570,7 +620,7 @@ function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, re
       setTimeout(() => inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
   };
 
-  const handleLike = async (comment: any) => {
+  const handleLike = async (comment: Comment) => {
       if (!user) return alert("로그인이 필요합니다.");
       const isLiked = comment.likedBy?.includes(user.uid);
       try {
@@ -628,9 +678,20 @@ function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, re
   );
 }
 
-function CommentItem({ comment, user, onDelete, onLike, isBest, opponentAvg, teamTheme, onEdit }: any) {
+interface CommentItemProps {
+  comment: Comment;
+  user: { uid: string } | null;
+  onDelete?: (id: string) => void;
+  onLike: () => void;
+  isBest?: boolean;
+  opponentAvg: number;
+  teamTheme: CardTheme;
+  onEdit: () => void;
+}
+
+function CommentItem({ comment, user, onDelete, onLike, isBest, opponentAvg, teamTheme, onEdit }: CommentItemProps) {
     const isMine = user?.uid === comment.userId;
-    const isLiked = comment.likedBy?.includes(user?.uid);
+    const isLiked = user?.uid ? comment.likedBy?.includes(user.uid) : false;
 
     let commentColor = 'bg-slate-500'; 
     if (opponentAvg > 0) {
@@ -655,7 +716,7 @@ function CommentItem({ comment, user, onDelete, onLike, isBest, opponentAvg, tea
                         {isMine && (
                             <button onClick={onEdit} className="text-slate-500 hover:text-white transition-colors flex items-center gap-1"><EditIcon /><span className="text-[9px]">수정</span></button>
                         )}
-                        {isMine && !isBest && <button onClick={() => onDelete(comment.id)} className="text-slate-500 hover:text-red-400 transition-colors"><TrashIcon /></button>}
+                        {isMine && !isBest && onDelete && <button onClick={() => onDelete(comment.id)} className="text-slate-500 hover:text-red-400 transition-colors"><TrashIcon /></button>}
                     </div>
                 </div>
             </div>

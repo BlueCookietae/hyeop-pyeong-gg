@@ -16,7 +16,8 @@
     "jszip": "^3.10.1",
     "next": "16.1.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@types/file-saver": "^2.0.7",

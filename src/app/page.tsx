@@ -1,15 +1,16 @@
 import { db } from '@/lib/firebase';
-import { collection, getDocs } from 'firebase/firestore'; 
+import { collection, getDocs } from 'firebase/firestore';
 import HomeView from '@/components/HomeView';
-import { Suspense } from 'react'; 
-import { serializeData, getRosterMap } from '@/lib/lck-utils'; // ⭐ 공통 모듈 사용
+import { Suspense } from 'react';
+import { serializeData, getRosterMap } from '@/lib/lck-utils';
+import { APP_ID } from '@/constants/config';
+import type { Match, RosterMap } from '@/types';
 
-export const revalidate = 60; 
-const APP_ID = 'lck-2026-app';
+export const revalidate = 60;
 
 export default async function Page() {
-  let matches: any[] = [];
-  let rosters: Record<string, any> = {};
+  let matches: Match[] = [];
+  let rosters: Record<number, RosterMap> = {};
 
   try {
     // 1. 매치 데이터
@@ -17,7 +18,7 @@ export default async function Page() {
     const matchSnap = await getDocs(matchesRef);
     
     matches = matchSnap.docs
-      .map(d => serializeData({ id: d.id, ...d.data() }))
+      .map(d => serializeData({ id: d.id, ...d.data() }) as Match)
       .sort((a, b) => b.date.localeCompare(a.date));
 
     // 2. 팀 데이터 (로스터)
@@ -28,10 +29,8 @@ export default async function Page() {
       const safeData = serializeData({ id: doc.id, ...doc.data() });
       
       if (safeData) {
-          // ⭐ 함수 호출 한 번으로 끝!
           const rosterMap = getRosterMap(safeData);
-          rosters[safeData.id] = rosterMap; 
-          if (safeData.name) rosters[safeData.name] = rosterMap;
+          rosters[safeData.id] = rosterMap;
       }
     });
 
