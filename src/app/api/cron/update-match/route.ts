@@ -52,10 +52,21 @@ async function saveMatchToDB(m: any) {
         winner_id: g.winner?.id || null,
     }));
 
+    // 리그 슬러그 → 표시 이름 매핑
+    const LEAGUE_LABELS: Record<string, string> = {
+        'lck': 'LCK',
+        'lol-world-championship': 'WORLDS',
+        'lol-mid-season-invitational': 'MSI',
+        'first-stand': 'FIRST STAND',
+        'lol-esports-world-cup': 'EWC',
+        'lol-asian-games': 'ASIAN GAMES',
+    };
+    const leagueLabel = LEAGUE_LABELS[m.league?.slug] || m.league?.name?.toUpperCase() || 'LCK';
+
     const matchData = {
         id: m.id,
-        league: "LCK",
-        round: m.serie?.name || "2026 Season",
+        league: leagueLabel,
+        round: m.serie?.name || m.tournament?.name || "2026 Season",
         date: kstDate,
         original_date: m.begin_at,
         status: m.status.toUpperCase(), // RUNNING, FINISHED, NOT_STARTED
@@ -183,13 +194,18 @@ async function syncLiveAndRecentMatches() {
 
     console.log(`⏱️ Smart Cron Triggered: Checking range ${rangeString}`);
 
-    // 1) 현재 진행 중인 경기 (시작 시간 관계없이 항상 가져옴)
-    const runningUrl = `https://api.pandascore.co/lol/matches?filter[league_id]=293&filter[status]=running&sort=begin_at`;
-    const runningMatches = await fetchPanda(runningUrl);
-    console.log(`🟢 Running matches: ${runningMatches.length}`);
+    // 1) 현재 진행 중인 경기: 리그 필터 없이 전체 LoL → 한국 팀 참여분만 저장
+    //    → LCK + 국제전 (MSI, Worlds, First Stand 등) 자동 감지
+    const runningUrl = `https://api.pandascore.co/lol/matches?filter[status]=running&sort=begin_at&per_page=50`;
+    const allRunning = await fetchPanda(runningUrl);
+    const runningMatches = allRunning.filter((m: any) =>
+        m.opponents?.some((o: any) => o.opponent?.location === 'KR')
+    );
+    console.log(`🟢 Running matches (KR teams): ${runningMatches.length} / ${allRunning.length} total`);
 
-    // 2) ±1시간 범위 경기 (곧 시작하거나 막 끝난 경기)
-    const rangeUrl = `https://api.pandascore.co/lol/matches?filter[league_id]=293&range[begin_at]=${rangeString}&sort=begin_at`;
+    // 2) ±1시간 범위 경기 (LCK + 주요 국제전)
+    const KR_LEAGUE_IDS = '293'; // LCK; 국제전은 running 필터로 잡힘
+    const rangeUrl = `https://api.pandascore.co/lol/matches?filter[league_id]=${KR_LEAGUE_IDS}&range[begin_at]=${rangeString}&sort=begin_at`;
     const rangeMatches = await fetchPanda(rangeUrl);
     console.log(`📅 Range matches: ${rangeMatches.length}`);
 
@@ -260,8 +276,23 @@ export async function GET(request: Request) {
 
         // 4. Admin 전체 경기 동기화 기능 (기존 유지)
         if (mode === 'sync_matches') {
-            const result = await syncMatchData(); // 전체 동기화 함수 호출
+            const result = await syncMatchData();
             return NextResponse.json(result);
+        }
+
+        // 5. 국제전 토너먼트 동기화 (league_id 직접 지정)
+        //    예: /api/cron/update-match?mode=sync_tournament&leagueId=5 (Worlds)
+        if (mode === 'sync_tournament' && targetId) {
+            await ensureAuth();
+            console.log(`🌏 Syncing tournament: league_id=${targetId}`);
+            const url = `https://api.pandascore.co/lol/matches?filter[league_id]=${targetId}&range[begin_at]=2024-01-01T00:00:00Z,2026-12-31T23:59:59Z&per_page=100&sort=begin_at`;
+            const matches = await fetchPanda(url);
+            let count = 0;
+            for (const m of matches) {
+                const saved = await saveMatchToDB(m);
+                if (saved) count++;
+            }
+            return NextResponse.json({ success: true, count, leagueId: targetId });
         }
 
         return NextResponse.json({ error: "Invalid mode parameter" }, { status: 400 });

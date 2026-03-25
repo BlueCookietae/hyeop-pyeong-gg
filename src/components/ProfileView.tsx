@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, documentId } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { APP_ID } from '@/constants/config';
 import { useAuthStore } from '@/stores/authStore';
@@ -59,26 +59,26 @@ export default function ProfileView() {
           };
         });
 
-        // 매치 정보 병렬 fetch
-        const matchInfos = await Promise.all(
-          rawRatings.map(async (r) => {
-            try {
-              const matchSnap = await getDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'matches', r.matchId));
-              if (matchSnap.exists()) {
-                const m = matchSnap.data();
-                return {
-                  matchId: r.matchId,
-                  homeCode: m.home?.code || m.home?.name || '?',
-                  awayCode: m.away?.code || m.away?.name || '?',
-                  homeLogo: m.home?.logo || '',
-                  awayLogo: m.away?.logo || '',
-                  date: m.date || '',
-                };
-              }
-            } catch (e) {}
-            return null;
-          })
-        );
+        // 매치 정보 배치 fetch (N+1 → 최대 30개씩 in 쿼리)
+        const matchIds = rawRatings.map(r => r.matchId);
+        const matchesCol = collection(db, 'artifacts', APP_ID, 'public', 'data', 'matches');
+        const chunks: string[][] = [];
+        for (let i = 0; i < matchIds.length; i += 30) chunks.push(matchIds.slice(i, i + 30));
+        const matchDocs = (await Promise.all(
+          chunks.map(chunk => getDocs(query(matchesCol, where(documentId(), 'in', chunk))))
+        )).flatMap(snap => snap.docs);
+
+        const matchInfos = matchDocs.map(d => {
+          const m = d.data();
+          return {
+            matchId: d.id,
+            homeCode: m.home?.code || m.home?.name || '?',
+            awayCode: m.away?.code || m.away?.name || '?',
+            homeLogo: m.home?.logo || '',
+            awayLogo: m.away?.logo || '',
+            date: m.date || '',
+          };
+        });
 
         const matchInfoMap: Record<string, NonNullable<RatedMatch['matchInfo']>> = {};
         matchInfos.forEach(info => { if (info) matchInfoMap[info.matchId] = info; });
