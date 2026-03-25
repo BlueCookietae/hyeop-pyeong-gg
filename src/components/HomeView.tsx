@@ -588,10 +588,11 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
                               if (Number(g.winner_id) === Number(match.home.id)) winnerLogo = isImagesReady ? teamLogos.home : match.home.logo;
                               else if (Number(g.winner_id) === Number(match.away.id)) winnerLogo = isImagesReady ? teamLogos.away : match.away.logo;
                           }
+                          const isActive = activeGameId === String(g.id);
                           return (
-                              <button key={g.id} onClick={() => setActiveGameId(String(g.id))} className={`px-4 py-1.5 rounded-xl text-[10px] font-black transition-all whitespace-nowrap flex items-center gap-1 ${activeGameId === String(g.id) ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
-                                  <span>GAME {g.position}</span>
-                                  {winnerLogo && <img src={winnerLogo} className="w-3.5 h-3.5 object-contain ml-1" alt="win" />}
+                              <button key={g.id} onClick={() => setActiveGameId(String(g.id))} className={`py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center gap-1 ${isActive ? 'px-3 bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'px-2.5 bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
+                                  <span>{isActive ? `GAME ${g.position}` : `G${g.position}`}</span>
+                                  {isActive && winnerLogo && <img src={winnerLogo} className="w-3.5 h-3.5 object-contain" alt="win" />}
                               </button>
                           );
                       })}
