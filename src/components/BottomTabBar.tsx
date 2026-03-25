@@ -32,6 +32,17 @@ export default function BottomTabBar() {
           </svg>
           <span className="text-[9px] font-black uppercase tracking-widest">랭킹</span>
         </Link>
+        <Link
+          href="/profile"
+          className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${
+            pathname === '/profile' ? 'text-cyan-400' : 'text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+            <path fillRule="evenodd" d="M7.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0ZM3.751 20.105a8.25 8.25 0 0 1 16.498 0 .75.75 0 0 1-.437.695A18.683 18.683 0 0 1 12 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 0 1-.437-.695Z" clipRule="evenodd" />
+          </svg>
+          <span className="text-[9px] font-black uppercase tracking-widest">프로필</span>
+        </Link>
       </div>
     </div>
   );
