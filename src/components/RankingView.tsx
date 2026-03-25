@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { POSITIONS, POS_ICONS } from '@/constants/config';
 import type { Position, PlayerRankData, MatchHighlight } from '@/types';
+import BottomTabBar from '@/components/BottomTabBar';
 
 const getProxiedUrl = (url?: string | null): string => {
   if (!url) return '';
@@ -20,10 +21,8 @@ export default function RankingView({ rankingData }: { rankingData: PlayerRankDa
     <div className="min-h-screen bg-slate-950 text-white font-sans pb-20">
       {/* Header */}
       <div className="sticky top-0 z-40 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/50">
-        <div className="max-w-md mx-auto px-5 py-3 flex items-center justify-between">
-          <Link href="/" className="text-slate-500 hover:text-white text-sm font-bold transition-colors">← 홈</Link>
+        <div className="max-w-md mx-auto px-5 py-3 flex items-center justify-center">
           <h1 className="font-black text-cyan-400 italic tracking-tighter uppercase text-lg">시즌 랭킹</h1>
-          <div className="w-10" />
         </div>
 
         {/* Position tabs */}
@@ -58,6 +57,7 @@ export default function RankingView({ rankingData }: { rankingData: PlayerRankDa
           ))
         )}
       </div>
+      <BottomTabBar />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
+import BottomTabBar from '@/components/BottomTabBar';
 import * as htmlToImage from 'html-to-image';
 import Link from 'next/link';
 import { APP_ID, POSITIONS, FUN_KEY, POS_ICONS } from '@/constants/config';
@@ -164,10 +165,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
                <h1 className="font-black text-cyan-400 italic tracking-tighter uppercase text-2xl">협곡평점.GG</h1>
             </div>
             <div className="flex items-center gap-2">
-              <Link href="/ranking" className={`text-slate-400 hover:text-cyan-400 transition-colors font-black text-[10px] uppercase tracking-widest border border-slate-700 hover:border-cyan-500/50 rounded-lg px-2 py-1 ${isHeaderCompact ? 'hidden' : ''}`}>
-                랭킹
-              </Link>
-              <div className={`flex-shrink-0 transition-transform duration-300 ${isHeaderCompact ? 'scale-75 origin-right' : 'scale-90 origin-right'}`}>
+<div className={`flex-shrink-0 transition-transform duration-300 ${isHeaderCompact ? 'scale-75 origin-right' : 'scale-90 origin-right'}`}>
                 <LoginButton compact={isHeaderCompact} />
               </div>
             </div>
@@ -226,6 +224,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         </AnimatePresence>
         <Footer />
       </div>
+      <BottomTabBar />
     </div>
   );
 }
