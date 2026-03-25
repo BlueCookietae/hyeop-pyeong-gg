@@ -163,8 +163,13 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
             <div className={`origin-left transition-transform duration-300 ${isHeaderCompact ? 'scale-75' : 'scale-100'}`}>
                <h1 className="font-black text-cyan-400 italic tracking-tighter uppercase text-2xl">협곡평점.GG</h1>
             </div>
-            <div className={`flex-shrink-0 transition-transform duration-300 ${isHeaderCompact ? 'scale-75 origin-right' : 'scale-90 origin-right'}`}>
-              <LoginButton compact={isHeaderCompact} />
+            <div className="flex items-center gap-2">
+              <Link href="/ranking" className={`text-slate-400 hover:text-cyan-400 transition-colors font-black text-[10px] uppercase tracking-widest border border-slate-700 hover:border-cyan-500/50 rounded-lg px-2 py-1 ${isHeaderCompact ? 'hidden' : ''}`}>
+                랭킹
+              </Link>
+              <div className={`flex-shrink-0 transition-transform duration-300 ${isHeaderCompact ? 'scale-75 origin-right' : 'scale-90 origin-right'}`}>
+                <LoginButton compact={isHeaderCompact} />
+              </div>
             </div>
           </header>
           <div className={`flex items-center justify-between px-4 transition-all duration-300 ${isHeaderCompact ? 'pb-2' : 'pb-2'}`}>

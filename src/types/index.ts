@@ -55,6 +55,27 @@ export interface Match {
 
 export type RosterMap = Record<Position, Player[]>;
 
+export interface MatchHighlight {
+  matchId: string;
+  homeTeam: string;
+  awayTeam: string;
+  date: string;
+  avgRating: number;
+}
+
+export interface PlayerRankData {
+  name: string;
+  image?: string | null;
+  teamName: string;
+  teamCode: string;
+  teamLogo: string;
+  position: Position;
+  avgRating: number;
+  totalRatings: number;
+  bestMatch: MatchHighlight | null;
+  worstMatch: MatchHighlight | null;
+}
+
 export interface Comment {
   id: string;
   userId: string;
