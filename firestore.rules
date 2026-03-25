@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // 🛠️ 새 데이터 구조 (artifacts) 허용 규칙
+    // =========================================================
+    match /artifacts/lck-2026-app/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // =========================================================
+    // 🔐 헬퍼 함수들
+    // =========================================================
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isLoggedIn() && (
+        request.auth.token.email == "ggt3944@gmail.com"
+      );
+    }
+
+    // =========================================================
+    // 📂 컬렉션 규칙
+    // =========================================================
+
+    // 1. 시스템 로그
+    match /system/pandascore {
+      allow read, write: if true;
+    }
+
+    // 2. 평점 (matchRatings)
+    match /matchRatings/{document=**} {
+      allow read: if true;
+      allow write: if isLoggedIn() && (
+        request.resource.data.userId == request.auth.uid ||
+        resource.data.userId == request.auth.uid
+      );
+    }
+
+    // 3. 댓글 (matchComments)
+    match /matchComments/{commentId} {
+      allow read: if true;
+      allow create: if isLoggedIn();
+      allow update: if isLoggedIn();
+      allow delete: if isLoggedIn() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // 4. 승자 예측 (matchPredictions)
+    match /matchPredictions/{predId} {
+      allow read: if true;
+      // 본인 예측만 쓸 수 있고, predId가 {uid}_{matchId} 형식이어야 함
+      allow create, update: if isLoggedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        predId.matches(request.auth.uid + '_.*');
+      allow delete: if false;
+    }
+
+    // 5. (구) 경기 정보 & 팀 정보
+    match /matches/{matchId} {
+      allow read: if true;
+      allow write: if isAdmin() || isLoggedIn();
+    }
+
+    match /teams/{teamId} {
+      allow read: if true;
+      allow write: if isAdmin() || isLoggedIn();
+    }
+  }
+}

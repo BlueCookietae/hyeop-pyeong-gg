@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import LoginButton from '@/components/LoginButton';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, serverTimestamp, increment } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
 import BottomTabBar from '@/components/BottomTabBar';
@@ -254,6 +254,10 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
   const [isMyHoneyJam, setIsMyHoneyJam] = useState(false);
   const [isLoadingFun, setIsLoadingFun] = useState(false);
 
+  const [userPick, setUserPick] = useState<'home' | 'away' | null>(null);
+  const [predCounts, setPredCounts] = useState({ home: match.predictions?.home ?? 0, away: match.predictions?.away ?? 0 });
+  const [isPredLoading, setIsPredLoading] = useState(false);
+
   const [teamLogos, setTeamLogos] = useState({ home: '', away: '' });
   const [isImagesReady, setIsImagesReady] = useState(false);
 
@@ -359,6 +363,54 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
       }
     } 
   }, [isOpen, isTarget, isClicked, isFocused, lastClickedId, match.id, onRestoreComplete]);
+
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'matchPredictions', `${user.uid}_${match.id}`));
+        if (snap.exists()) setUserPick(snap.data().pick as 'home' | 'away');
+      } catch (e) {}
+    };
+    load();
+  }, [user, match.id]);
+
+  const votePrediction = async (pick: 'home' | 'away') => {
+    if (!user) return alert('로그인이 필요합니다.');
+    if (isPredLoading || userPick === pick || match.status !== 'NOT_STARTED') return;
+    const oldPick = userPick;
+    setIsPredLoading(true);
+    setUserPick(pick);
+    setPredCounts(prev => {
+      const next = { ...prev, [pick]: prev[pick] + 1 };
+      if (oldPick) next[oldPick] = Math.max(0, next[oldPick] - 1);
+      return next;
+    });
+    try {
+      const predRef = doc(db, 'matchPredictions', `${user.uid}_${match.id}`);
+      const matchRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'matches', String(match.id));
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(predRef);
+        const existingPick = snap.exists() ? snap.data().pick as 'home' | 'away' : null;
+        tx.set(predRef, { pick, matchId: String(match.id), userId: user.uid, createdAt: serverTimestamp() });
+        if (existingPick && existingPick !== pick) {
+          tx.update(matchRef, { [`predictions.${existingPick}`]: increment(-1), [`predictions.${pick}`]: increment(1) });
+        } else if (!existingPick) {
+          tx.update(matchRef, { [`predictions.${pick}`]: increment(1) });
+        }
+      });
+    } catch (e) {
+      setUserPick(oldPick);
+      setPredCounts(prev => {
+        const next = { ...prev, [pick]: Math.max(0, prev[pick] - 1) };
+        if (oldPick) next[oldPick] = next[oldPick] + 1;
+        return next;
+      });
+      console.error(e);
+    } finally {
+      setIsPredLoading(false);
+    }
+  };
 
   const handleToggleHoneyJam = async () => {
       if (!user) return alert("로그인이 필요합니다.");
@@ -472,16 +524,24 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
 
       <div className="p-8 pt-12 pb-4 text-center">
         <div className="flex justify-between items-start">
-          <div className="flex-1 flex flex-col items-center gap-1">
-            <div className="h-6 mb-2 flex items-center justify-center">{isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}</div>
-            <div className="w-16 h-16"><img src={isImagesReady ? teamLogos.home : `/teams/${homeCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} /></div>
+          <div
+            className={`flex-1 flex flex-col items-center gap-1 ${!isStarted ? 'cursor-pointer active:scale-95 transition-transform' : ''}`}
+            onClick={!isStarted ? (e) => { e.stopPropagation(); votePrediction('home'); } : undefined}
+          >
+            <div className="h-6 mb-2 flex items-center justify-center">
+              {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
+              {!isStarted && userPick === 'home' && <span className="text-[9px] font-black text-cyan-400 animate-pulse">내 예측 ✓</span>}
+            </div>
+            <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'home' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
+              <img src={isImagesReady ? teamLogos.home : `/teams/${homeCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
+            </div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{homeCode}</span></motion.div>
           </div>
-          
+
           <div className="px-2 pt-8 flex flex-col items-center">
             <span className="text-[10px] text-slate-500 font-bold mb-2 tracking-widest">{match.date.substring(5, 16).replace('-', '.')}</span>
             {isFinished ? (
-                <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg px-3">{match.home.score} : {match.away.score}</div> 
+                <div className="text-3xl font-black italic text-white tracking-tighter drop-shadow-lg px-3">{match.home.score} : {match.away.score}</div>
             ) : (
                 isLive ? (
                     <div className="text-2xl font-black italic text-transparent bg-clip-text bg-gradient-to-b from-amber-300 via-amber-500 to-amber-700 tracking-tighter drop-shadow-[0_2px_10px_rgba(245,158,11,0.5)] scale-110 px-3">
@@ -493,9 +553,17 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
             )}
           </div>
 
-          <div className="flex-1 flex flex-col items-center gap-1">
-            <div className="h-6 mb-2 flex items-center justify-center">{isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}</div>
-            <div className="w-16 h-16"><img src={isImagesReady ? teamLogos.away : `/teams/${awayCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} /></div>
+          <div
+            className={`flex-1 flex flex-col items-center gap-1 ${!isStarted ? 'cursor-pointer active:scale-95 transition-transform' : ''}`}
+            onClick={!isStarted ? (e) => { e.stopPropagation(); votePrediction('away'); } : undefined}
+          >
+            <div className="h-6 mb-2 flex items-center justify-center">
+              {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
+              {!isStarted && userPick === 'away' && <span className="text-[9px] font-black text-cyan-400 animate-pulse">내 예측 ✓</span>}
+            </div>
+            <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'away' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
+              <img src={isImagesReady ? teamLogos.away : `/teams/${awayCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
+            </div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{awayCode}</span></motion.div>
           </div>
         </div>
@@ -564,7 +632,13 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
                 })}
               </div>
 
-              <PredictionWidget match={match} homeCode={homeCode} awayCode={awayCode} />
+              <PredictionWidget
+                homeCode={homeCode}
+                awayCode={awayCode}
+                predCounts={predCounts}
+                userPick={userPick}
+                actualWinner={isFinished ? (isHomeWin ? 'home' : isAwayWin ? 'away' : null) : null}
+              />
 
               <div className="pt-2 border-t border-slate-800/50">
                 <HoneyJamToggle
@@ -594,8 +668,10 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
           <span className="text-[10px] font-bold text-slate-600 animate-pulse">▼ 터치해서 평점 보기</span>
         </div>
       )}
-      {!isStarted && (
-        <PredictionWidget match={match} homeCode={homeCode} awayCode={awayCode} />
+      {!isOpen && !isStarted && (
+        <div className="pb-5 text-center">
+          <span className="text-[10px] font-bold text-slate-600">👆 팀 로고 눌러서 승자 예측!</span>
+        </div>
       )}
     </div>
   );
