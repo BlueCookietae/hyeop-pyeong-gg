@@ -496,9 +496,11 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
     const { user } = useAuthStore();
     const [score, setScore] = useState(0.0);
     const [status, setStatus] = useState<'IDLE' | 'SAVING' | 'DONE'>('IDLE');
-    useEffect(() => { 
-        if (initialScore > 0) { setScore(initialScore); setStatus('DONE'); } 
+    const [isDirty, setIsDirty] = useState(false);
+    useEffect(() => {
+        if (initialScore > 0) { setScore(initialScore); setStatus('DONE'); }
         else { setScore(0.0); setStatus('IDLE'); }
+        setIsDirty(false);
     }, [initialScore, playerName, gameId]);
 
     const handleSave = async () => {
@@ -540,6 +542,7 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
             });
             onUpdate(playerName, score);
             setStatus('DONE');
+            setIsDirty(false);
         } catch (e) { console.error(e); setStatus('IDLE'); }
     };
 
@@ -548,11 +551,15 @@ function SimpleRatingBar({ matchId, gameId, gameIndex, playerName, initialScore,
     return (
         <div className="flex items-center gap-3 px-2 py-2">
             <div className="flex-1 relative h-10 bg-black/40 rounded-xl overflow-hidden touch-none shadow-inner border border-white/5">
-                <input type="range" min="0" max="10" step="0.5" value={score} onChange={(e) => { setScore(parseFloat(e.target.value)); if (status === 'DONE') setStatus('IDLE'); }} className="w-full h-full opacity-0 absolute z-20 cursor-pointer" />
+                <input type="range" min="0" max="10" step="0.5" value={score} onChange={(e) => { const v = parseFloat(e.target.value); setScore(v); if (v > 0) setIsDirty(true); if (status === 'DONE') setStatus('IDLE'); }} className="w-full h-full opacity-0 absolute z-20 cursor-pointer" />
                 <div className="absolute inset-0 pointer-events-none"><div className={`h-full transition-all duration-100 ${barColor}`} style={{ width: `${score * 10}%` }} /></div>
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><span className="text-white font-black text-lg italic drop-shadow-md">{score.toFixed(1)}</span></div>
             </div>
-            <button onClick={handleSave} disabled={status === 'SAVING' || status === 'DONE'} className={`w-16 h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center ${status === 'DONE' ? 'bg-white/10 text-green-400' : 'bg-white/10 text-white hover:bg-white/20 active:scale-95 disabled:opacity-50'}`}>
+            <button onClick={handleSave} disabled={status === 'SAVING' || status === 'DONE'} className={`w-16 h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center ${
+                status === 'DONE' ? 'bg-white/10 text-green-400' :
+                isDirty ? 'bg-cyan-500 text-black animate-pulse shadow-lg shadow-cyan-500/40' :
+                'bg-white/10 text-white hover:bg-white/20 active:scale-95 disabled:opacity-50'
+            }`}>
                 {status === 'SAVING' ? '...' : (status === 'DONE' ? '완료' : '등록')}
             </button>
         </div>
