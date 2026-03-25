@@ -168,8 +168,10 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
 
                         return (
                             <button key={g.id} onClick={() => setActiveGameIndex(idx + 1)} className="relative px-3 py-1 rounded-lg transition-all group shrink-0 flex items-center gap-1">
-                                <span className={`text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'}`}>Game {g.position}</span>
-                                {winnerLogo && <img src={getProxiedImageUrl(winnerLogo)} className="w-3 h-3 object-contain" alt="win" />}
+                                <span className={`text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-400'}`}>
+                                    {isActive ? `Game ${g.position}` : `G${g.position}`}
+                                </span>
+                                {isActive && winnerLogo && <img src={getProxiedImageUrl(winnerLogo)} className="w-3 h-3 object-contain" alt="win" />}
                                 {isActive && <motion.div layoutId="activeTab" className="absolute bottom-0 inset-x-3 h-0.5 bg-cyan-400 rounded-full" />}
                             </button>
                         )
