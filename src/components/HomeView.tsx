@@ -489,15 +489,40 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
         }
   };
 
-  const handleDownload = async (e: any) => {
+  const handleShare = async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!cardRef.current || !isImagesReady) return;
       cardRef.current.classList.add('download-mode');
       try {
           await new Promise(r => setTimeout(r, 10));
           const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 3, skipAutoScale: true });
-          const link = document.createElement('a'); link.download = `match_${match.id}.png`; link.href = dataUrl; link.click();
+          const blob = dataURItoBlob(dataUrl);
+          const file = new File([blob], `match_${match.id}.png`, { type: 'image/png' });
+          const shareUrl = `${window.location.origin}/match/${match.id}`;
+
+          // 모바일: 네이티브 공유 시트 (카카오톡, 트위터, 인스타 등)
+          if (navigator.canShare?.({ files: [file] })) {
+              await navigator.share({
+                  files: [file],
+                  title: '협곡평점.GG',
+                  text: `${homeCode} vs ${awayCode} 경기 평점 결과`,
+                  url: shareUrl,
+              });
+              return;
+          }
+          // 데스크탑 fallback: 이미지 다운로드
+          const link = document.createElement('a');
+          link.download = `match_${match.id}.png`;
+          link.href = dataUrl;
+          link.click();
       } finally { cardRef.current.classList.remove('download-mode'); }
+  };
+
+  const handleTwitterShare = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const text = encodeURIComponent(`${homeCode} vs ${awayCode} 경기 평점 남겼어요 👇`);
+      const url = encodeURIComponent(`${window.location.origin}/match/${match.id}`);
+      window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'noopener');
   };
 
   const isStarted = new Date() >= new Date(match.date.replace(' ', 'T'));
@@ -661,14 +686,15 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               </div>
 
               <div className="pt-2 flex gap-2 hide-on-download">
-                 <Link 
-                    href={`/match/${match.id}`} 
-                    onClick={(e) => e.stopPropagation()} 
+                 <Link
+                    href={`/match/${match.id}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xs uppercase transition-all shadow-lg flex items-center justify-center gap-2"
                  >
                     나도 평점 & 리뷰 남기기
                  </Link>
-                 <button onClick={handleDownload} disabled={!isImagesReady} className="w-12 flex items-center justify-center bg-white/5 border border-white/10 rounded-xl hover:bg-white/10">{isImagesReady ? '📷' : '⏳'}</button>
+                 <button onClick={handleTwitterShare} className="w-12 flex items-center justify-center bg-black border border-slate-700 rounded-xl hover:bg-slate-900 transition-colors text-white font-black text-sm">𝕏</button>
+                 <button onClick={handleShare} disabled={!isImagesReady} className="w-12 flex items-center justify-center bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors text-lg">{isImagesReady ? '📤' : '⏳'}</button>
               </div>
             </div>
           </motion.div>
