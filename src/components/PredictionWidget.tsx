@@ -44,6 +44,9 @@ export default function PredictionWidget({ match, homeCode, awayCode }: Predicti
   const vote = async (pick: 'home' | 'away') => {
     if (!user || userPick || isLoading || !isNotStarted) return;
     setIsLoading(true);
+    // 낙관적 업데이트: 트랜잭션 결과 기다리지 않고 즉시 UI 반영
+    setUserPick(pick);
+    setPredCounts(prev => ({ ...prev, [pick]: prev[pick] + 1 }));
     try {
       const predRef = doc(db, 'matchPredictions', `${user.uid}_${match.id}`);
       const matchRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'matches', String(match.id));
@@ -53,9 +56,10 @@ export default function PredictionWidget({ match, homeCode, awayCode }: Predicti
         tx.set(predRef, { pick, matchId: String(match.id), userId: user.uid, createdAt: serverTimestamp() });
         tx.update(matchRef, { [`predictions.${pick}`]: increment(1) });
       });
-      setUserPick(pick);
-      setPredCounts(prev => ({ ...prev, [pick]: prev[pick] + 1 }));
     } catch (e) {
+      // 실패 시 롤백
+      setUserPick(null);
+      setPredCounts(prev => ({ ...prev, [pick]: prev[pick] - 1 }));
       console.error(e);
     } finally {
       setIsLoading(false);
