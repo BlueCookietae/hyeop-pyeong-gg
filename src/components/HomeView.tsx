@@ -528,9 +528,14 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
             className={`flex-1 flex flex-col items-center gap-1 ${!isStarted ? 'cursor-pointer active:scale-95 transition-transform' : ''}`}
             onClick={!isStarted ? (e) => { e.stopPropagation(); votePrediction('home'); } : undefined}
           >
-            <div className="h-6 mb-2 flex items-center justify-center">
+            <div className="h-8 mb-2 flex flex-col items-center justify-end gap-0.5">
               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isHomeWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isHomeWin ? 'WIN' : 'LOSE'}</span>}
-              {!isStarted && userPick === 'home' && <span className="text-[9px] font-black text-cyan-400 animate-pulse">내 예측 ✓</span>}
+              {!isStarted && userPick === 'home' && <span className="text-[8px] font-black text-cyan-400 leading-none">내 예측 ✓</span>}
+              {!isStarted && (predCounts.home + predCounts.away) > 0 && (
+                <span className={`px-2 py-0.5 rounded text-[9px] font-black ${userPick === 'home' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-400'}`}>
+                  {Math.round(predCounts.home / (predCounts.home + predCounts.away) * 100)}%
+                </span>
+              )}
             </div>
             <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'home' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
               <img src={isImagesReady ? teamLogos.home : `/teams/${homeCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
@@ -557,9 +562,14 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
             className={`flex-1 flex flex-col items-center gap-1 ${!isStarted ? 'cursor-pointer active:scale-95 transition-transform' : ''}`}
             onClick={!isStarted ? (e) => { e.stopPropagation(); votePrediction('away'); } : undefined}
           >
-            <div className="h-6 mb-2 flex items-center justify-center">
+            <div className="h-8 mb-2 flex flex-col items-center justify-end gap-0.5">
               {isFinished && <span className={`px-2 py-0.5 rounded text-[9px] font-black ${isAwayWin ? 'bg-red-500 text-white' : 'bg-blue-500 text-white'}`}>{isAwayWin ? 'WIN' : 'LOSE'}</span>}
-              {!isStarted && userPick === 'away' && <span className="text-[9px] font-black text-cyan-400 animate-pulse">내 예측 ✓</span>}
+              {!isStarted && userPick === 'away' && <span className="text-[8px] font-black text-cyan-400 leading-none">내 예측 ✓</span>}
+              {!isStarted && (predCounts.home + predCounts.away) > 0 && (
+                <span className={`px-2 py-0.5 rounded text-[9px] font-black ${userPick === 'away' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-400'}`}>
+                  {Math.round(predCounts.away / (predCounts.home + predCounts.away) * 100)}%
+                </span>
+              )}
             </div>
             <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'away' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
               <img src={isImagesReady ? teamLogos.away : `/teams/${awayCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
@@ -667,11 +677,6 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
       {!isOpen && isStarted && (
         <div className="pb-6 text-center">
           <span className="text-[10px] font-bold text-slate-600 animate-pulse">▼ 터치해서 평점 보기</span>
-        </div>
-      )}
-      {!isOpen && !isStarted && (
-        <div className="pb-5 text-center">
-          <span className="text-[10px] font-bold text-slate-600">👆 팀 로고 눌러서 승자 예측!</span>
         </div>
       )}
     </div>
