@@ -8,6 +8,7 @@ import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore
 import { motion, AnimatePresence } from 'framer-motion';
 import Footer from '@/components/Footer';
 import BottomTabBar from '@/components/BottomTabBar';
+import PredictionWidget from '@/components/PredictionWidget';
 import * as htmlToImage from 'html-to-image';
 import Link from 'next/link';
 import { APP_ID, POSITIONS, FUN_KEY, POS_ICONS } from '@/constants/config';
@@ -563,11 +564,13 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
                 })}
               </div>
 
+              <PredictionWidget match={match} homeCode={homeCode} awayCode={awayCode} />
+
               <div className="pt-2 border-t border-slate-800/50">
-                <HoneyJamToggle 
-                    isEditing={true} 
-                    isActive={isMyHoneyJam} 
-                    count={funCount} 
+                <HoneyJamToggle
+                    isEditing={true}
+                    isActive={isMyHoneyJam}
+                    count={funCount}
                     onToggle={handleToggleHoneyJam}
                 />
               </div>
@@ -586,7 +589,14 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
           </motion.div>
         )}
       </AnimatePresence>
-      {!isOpen && <div className="pb-6 text-center"><span className="text-[10px] font-bold text-slate-600 animate-pulse">{isStarted ? "▼ 터치해서 평점 보기" : "⏳ 경기 시작 전"}</span></div>}
+      {!isOpen && isStarted && (
+        <div className="pb-6 text-center">
+          <span className="text-[10px] font-bold text-slate-600 animate-pulse">▼ 터치해서 평점 보기</span>
+        </div>
+      )}
+      {!isStarted && (
+        <PredictionWidget match={match} homeCode={homeCode} awayCode={awayCode} />
+      )}
     </div>
   );
 }

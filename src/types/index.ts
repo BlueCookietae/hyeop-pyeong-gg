@@ -51,6 +51,7 @@ export interface Match {
   away: TeamInfo;
   games: Game[];
   stats?: MatchStats;
+  predictions?: { home: number; away: number };
 }
 
 export type RosterMap = Record<Position, Player[]>;
