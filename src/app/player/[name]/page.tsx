@@ -197,7 +197,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
               {matchHistory.map(m => {
                 const color = m.avgRating >= 8 ? 'text-red-400' : m.avgRating >= 6 ? 'text-cyan-400' : 'text-slate-500';
                 return (
-                  <Link key={m.matchId} href={`/match/${m.matchId}`}
+                  <Link key={m.matchId} href={`/match/${m.matchId}?player=${encodeURIComponent(playerName)}`}
                     className="block bg-slate-900 border border-slate-800 hover:border-slate-600 rounded-2xl p-4 transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="flex-1 min-w-0">

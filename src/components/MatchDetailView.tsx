@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { db } from "@/lib/firebase";
 import { doc, getDoc, collection, query, where, getDocs, setDoc, deleteDoc, updateDoc, arrayUnion, arrayRemove, serverTimestamp, orderBy, limit, runTransaction, onSnapshot, increment } from "firebase/firestore";
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
@@ -48,6 +48,8 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => setIsMounted(true), []);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const focusPlayer = searchParams.get('player');
   const { user } = useAuthStore();
   const matchId = String(matchData.id);
 
@@ -73,9 +75,22 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
 
   const activeGameId = displayGames[activeGameIndex - 1]?.id || activeGameIndex;
 
-  const [activePosIndex, setActivePosIndex] = useState(0); 
-  const [selectedTeamSide, setSelectedTeamSide] = useState<'home' | 'away'>('home'); 
+  const [activePosIndex, setActivePosIndex] = useState(0);
+  const [selectedTeamSide, setSelectedTeamSide] = useState<'home' | 'away'>('home');
   const [userSelection, setUserSelection] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!focusPlayer) return;
+    for (const side of ['home', 'away'] as const) {
+      for (let i = 0; i < POSITIONS.length; i++) {
+        if (initialRosters[side][POSITIONS[i]]?.some((p: any) => p.name === focusPlayer)) {
+          setSelectedTeamSide(side);
+          setActivePosIndex(i);
+          return;
+        }
+      }
+    }
+  }, [focusPlayer]);
 
   const [stats, setStats] = useState<MatchStats>(matchData.stats || { games: {}, total: {} });
   const [myRatings, setMyRatings] = useState<Record<string, number>>({});
