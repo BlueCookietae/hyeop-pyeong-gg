@@ -12,10 +12,40 @@ const getProxiedUrl = (url?: string | null): string => {
   return `https://wsrv.nl/?url=${url.replace(/^https?:\/\//, '')}&output=png`;
 };
 
+const EXAMPLE_PLAYERS: Record<Position, PlayerRankData[]> = {
+  TOP:  [
+    { name: 'Zeus',    teamCode: 'T1',  teamName: 'T1',  teamLogo: '/teams/T1.png',  position: 'TOP', image: null, avgRating: 8.41, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Kiin',    teamCode: 'GEN', teamName: 'Gen.G', teamLogo: '/teams/GEN.png', position: 'TOP', image: null, avgRating: 8.12, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Doran',   teamCode: 'HLE', teamName: 'HLE', teamLogo: '/teams/HLE.png', position: 'TOP', image: null, avgRating: 7.89, totalRatings: -1, bestMatch: null, worstMatch: null },
+  ],
+  JGL:  [
+    { name: 'Oner',    teamCode: 'T1',  teamName: 'T1',  teamLogo: '/teams/T1.png',  position: 'JGL', image: null, avgRating: 8.65, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Canyon',  teamCode: 'GEN', teamName: 'Gen.G', teamLogo: '/teams/GEN.png', position: 'JGL', image: null, avgRating: 8.33, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Peanut',  teamCode: 'HLE', teamName: 'HLE', teamLogo: '/teams/HLE.png', position: 'JGL', image: null, avgRating: 7.70, totalRatings: -1, bestMatch: null, worstMatch: null },
+  ],
+  MID:  [
+    { name: 'Faker',   teamCode: 'T1',  teamName: 'T1',  teamLogo: '/teams/T1.png',  position: 'MID', image: null, avgRating: 9.01, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Chovy',   teamCode: 'GEN', teamName: 'Gen.G', teamLogo: '/teams/GEN.png', position: 'MID', image: null, avgRating: 8.77, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Zeka',    teamCode: 'HLE', teamName: 'HLE', teamLogo: '/teams/HLE.png', position: 'MID', image: null, avgRating: 7.55, totalRatings: -1, bestMatch: null, worstMatch: null },
+  ],
+  ADC:  [
+    { name: 'Gumayusi', teamCode: 'T1', teamName: 'T1', teamLogo: '/teams/T1.png',  position: 'ADC', image: null, avgRating: 8.20, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Peyz',    teamCode: 'GEN', teamName: 'Gen.G', teamLogo: '/teams/GEN.png', position: 'ADC', image: null, avgRating: 8.05, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Viper',   teamCode: 'HLE', teamName: 'HLE', teamLogo: '/teams/HLE.png', position: 'ADC', image: null, avgRating: 7.88, totalRatings: -1, bestMatch: null, worstMatch: null },
+  ],
+  SUP:  [
+    { name: 'Keria',   teamCode: 'T1',  teamName: 'T1',  teamLogo: '/teams/T1.png',  position: 'SUP', image: null, avgRating: 8.90, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Lehends', teamCode: 'GEN', teamName: 'Gen.G', teamLogo: '/teams/GEN.png', position: 'SUP', image: null, avgRating: 8.44, totalRatings: -1, bestMatch: null, worstMatch: null },
+    { name: 'Delight', teamCode: 'HLE', teamName: 'HLE', teamLogo: '/teams/HLE.png', position: 'SUP', image: null, avgRating: 7.62, totalRatings: -1, bestMatch: null, worstMatch: null },
+  ],
+};
+
 export default function RankingView({ rankingData }: { rankingData: PlayerRankData[] }) {
   const [activePos, setActivePos] = useState<Position>('TOP');
 
   const filtered = rankingData.filter(p => p.position === activePos);
+  const isEmpty = rankingData.length === 0;
+  const displayData = isEmpty ? EXAMPLE_PLAYERS[activePos] : filtered;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans pb-20">
@@ -46,14 +76,18 @@ export default function RankingView({ rankingData }: { rankingData: PlayerRankDa
 
       {/* Ranking List */}
       <div className="max-w-md mx-auto px-4 pt-4 space-y-3">
-        {filtered.length === 0 ? (
+        {isEmpty && (
+          <div className="text-center text-slate-600 text-[10px] font-bold py-2 bg-slate-900/50 rounded-xl border border-slate-800 border-dashed">
+            평점 데이터가 쌓이면 실제 랭킹으로 교체됩니다
+          </div>
+        )}
+        {displayData.length === 0 ? (
           <div className="text-center text-slate-600 py-20 font-bold">
-            아직 평점 데이터가 부족해요<br />
-            <span className="text-sm font-normal text-slate-700 mt-2 block">경기를 보고 평점을 남겨주세요!</span>
+            이 포지션 데이터가 없어요
           </div>
         ) : (
-          filtered.map((player, idx) => (
-            <PlayerRankCard key={player.name} player={player} rank={idx + 1} />
+          displayData.map((player, idx) => (
+            <PlayerRankCard key={player.name} player={player} rank={idx + 1} isExample={isEmpty} />
           ))
         )}
       </div>
@@ -62,7 +96,7 @@ export default function RankingView({ rankingData }: { rankingData: PlayerRankDa
   );
 }
 
-function PlayerRankCard({ player, rank }: { player: PlayerRankData; rank: number }) {
+function PlayerRankCard({ player, rank, isExample }: { player: PlayerRankData; rank: number; isExample?: boolean }) {
   const rankColor =
     rank === 1 ? 'text-yellow-400' :
     rank === 2 ? 'text-slate-300' :
@@ -76,7 +110,7 @@ function PlayerRankCard({ player, rank }: { player: PlayerRankData; rank: number
     'border-slate-800';
 
   return (
-    <div className={`bg-slate-900 border ${rankBg} rounded-2xl p-4 space-y-3`}>
+    <div className={`bg-slate-900 border ${rankBg} rounded-2xl p-4 space-y-3 ${isExample ? 'opacity-60' : ''}`}>
       {/* 선수 기본 정보 */}
       <div className="flex items-center gap-3">
         <span className={`text-xl font-black italic w-7 text-center shrink-0 ${rankColor}`}>{rank}</span>
@@ -92,9 +126,15 @@ function PlayerRankCard({ player, rank }: { player: PlayerRankData; rank: number
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="font-black text-white text-lg italic tracking-tighter leading-none">{player.name}</div>
+          {isExample ? (
+            <div className="font-black text-white text-lg italic tracking-tighter leading-none">{player.name}</div>
+          ) : (
+            <Link href={`/player/${encodeURIComponent(player.name)}`} className="font-black text-white text-lg italic tracking-tighter leading-none hover:text-cyan-400 transition-colors">
+              {player.name}
+            </Link>
+          )}
           <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-            {player.teamCode} · {player.totalRatings}명 평가
+            {player.teamCode} · {isExample ? '예시' : `${player.totalRatings}명 평가`}
           </div>
         </div>
 
