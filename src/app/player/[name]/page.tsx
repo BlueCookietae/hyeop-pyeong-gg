@@ -79,7 +79,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
 
     matchesSnap.docs.forEach(doc => {
       const m = serializeData({ id: doc.id, ...doc.data() }) as Match;
-      if (m.status !== 'FINISHED' || !m.stats?.games) return;
+      if (m.status !== 'FINISHED' || !m.stats?.games || !m.home || !m.away) return;
       let sum = 0, count = 0;
       for (const gameStats of Object.values(m.stats.games)) {
         const stat = gameStats[playerName];
@@ -88,10 +88,10 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
       if (count === 0) return;
       matchHistory.push({
         matchId: String(m.id),
-        homeTeam: m.home.code,
-        awayTeam: m.away.code,
-        date: m.date,
-        league: m.league,
+        homeTeam: m.home.code ?? m.home.name ?? '?',
+        awayTeam: m.away.code ?? m.away.name ?? '?',
+        date: m.date ?? '',
+        league: m.league ?? '',
         avgRating: sum / count,
         ratingCount: count,
       });
@@ -100,6 +100,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
     matchHistory.sort((a, b) => b.date.localeCompare(a.date));
 
   } catch (e: any) {
+    console.error('[PlayerPage] error:', e?.message, e?.stack);
     return (
       <div className="min-h-screen bg-slate-950 text-slate-500 flex items-center justify-center">
         <div className="text-center">
