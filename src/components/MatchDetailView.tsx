@@ -102,6 +102,18 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
+      // FINISHED 경기는 실시간 리스너 불필요 — 단발 getDoc으로 비용 절감
+      if (matchData.status === 'FINISHED') {
+          getDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'matches', matchId)).then(d => {
+              if (d.exists()) {
+                  const data = d.data();
+                  setStats(data.stats || { games: {}, total: {} });
+                  setLiveMatchData({ ...data, id: d.id } as Match);
+              }
+          });
+          return;
+      }
+      // 진행 중 경기만 실시간 리스닝
       const unsub = onSnapshot(doc(db, 'artifacts', APP_ID, 'public', 'data', 'matches', matchId), (doc) => {
           if (doc.exists()) {
               const data = doc.data();
@@ -630,13 +642,12 @@ function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, re
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-      const q = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("likes", "desc"), limit(3));
-      getDocs(q).then(snap => setBestComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Comment)).filter(c => c.likes > 0))).catch(e => console.log("Index needed?", e));
-  }, [matchId, gameId, playerName, refreshTrigger]);
-
-  useEffect(() => {
-      const q = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("createdAt", "desc"), limit(limitCount));
-      getDocs(q).then(snap => setRecentComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Comment))));
+      const bestQ = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("likes", "desc"), limit(3));
+      const recentQ = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("createdAt", "desc"), limit(limitCount));
+      Promise.all([getDocs(bestQ).catch(() => null), getDocs(recentQ)]).then(([bestSnap, recentSnap]) => {
+          if (bestSnap) setBestComments(bestSnap.docs.map(d => ({ id: d.id, ...d.data() } as Comment)).filter(c => c.likes > 0));
+          setRecentComments(recentSnap.docs.map(d => ({ id: d.id, ...d.data() } as Comment)));
+      });
   }, [matchId, gameId, playerName, refreshTrigger, limitCount]);
 
   const hasRated = userRating > 0;
@@ -656,10 +667,8 @@ function CommentSection({ matchId, gameId, gameIndex, playerName, userRating, re
           }, { merge: true });
           
           setInputVal("");
-          setIsEditing(false); 
-          setLimitCount(5); 
-          const q = query(collection(db, "matchComments"), where("matchId", "==", matchId), where("gameId", "==", String(gameId)), where("playerName", "==", playerName), orderBy("createdAt", "desc"), limit(limitCount));
-          getDocs(q).then(snap => setRecentComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as Comment))));
+          setIsEditing(false);
+          setLimitCount(5);
       } catch (e) { console.error(e); alert("등록 실패"); } finally { setIsSubmitting(false); }
   };
 

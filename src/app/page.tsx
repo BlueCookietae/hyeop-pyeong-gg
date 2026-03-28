@@ -6,7 +6,7 @@ import { serializeData, getRosterMap } from '@/lib/lck-utils';
 import { APP_ID } from '@/constants/config';
 import type { Match, RosterMap } from '@/types';
 
-export const revalidate = 60;
+export const revalidate = 300;
 
 export default async function Page() {
   let matches: Match[] = [];
