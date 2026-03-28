@@ -33,54 +33,64 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
   const { name } = await params;
   const playerName = decodeURIComponent(name);
 
-  // 1. 팀/선수 정보
-  const teamsSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'public', 'data', 'teams'));
-  let playerInfo: { teamName: string; teamCode: string; teamLogo: string; position: Position; image?: string | null } | null = null;
+  type PlayerInfo = { teamName: string; teamCode: string; teamLogo: string; position: Position; image?: string | null };
+  let playerInfo: PlayerInfo | null = null;
+  let matchHistory: { matchId: string; homeTeam: string; awayTeam: string; date: string; league: string; avgRating: number; ratingCount: number }[] = [];
 
-  teamsSnap.forEach(doc => {
-    const team = serializeData(doc.data());
-    if (!team) return;
-    const rosterMap = getRosterMap(team);
-    POSITIONS.forEach(pos => {
-      rosterMap[pos].forEach((p: Player) => {
-        if (p.name === playerName) {
-          playerInfo = { teamName: team.name, teamCode: team.acronym, teamLogo: team.logo, position: pos, image: p.image };
-        }
+  try {
+    // 1. 팀/선수 정보
+    const teamsSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'public', 'data', 'teams'));
+    teamsSnap.forEach(doc => {
+      const team = serializeData(doc.data());
+      if (!team) return;
+      const rosterMap = getRosterMap(team);
+      POSITIONS.forEach(pos => {
+        rosterMap[pos].forEach((p: Player) => {
+          if (p.name === playerName) {
+            playerInfo = { teamName: team.name, teamCode: team.acronym, teamLogo: team.logo, position: pos, image: p.image };
+          }
+        });
       });
     });
-  });
 
-  // 2. 경기별 평점 집계
-  const matchesSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'public', 'data', 'matches'));
-  const matchHistory: { matchId: string; homeTeam: string; awayTeam: string; date: string; league: string; avgRating: number; ratingCount: number }[] = [];
+    // 2. 경기별 평점 집계
+    const matchesSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'public', 'data', 'matches'));
+    matchesSnap.docs.forEach(doc => {
+      const m = serializeData({ id: doc.id, ...doc.data() }) as Match;
+      if (m.status !== 'FINISHED' || !m.stats?.games) return;
 
-  matchesSnap.docs.forEach(doc => {
-    const m = serializeData({ id: doc.id, ...doc.data() }) as Match;
-    if (m.status !== 'FINISHED' || !m.stats?.games) return;
+      let sum = 0, count = 0;
+      for (const gameStats of Object.values(m.stats.games)) {
+        const stat = gameStats[playerName];
+        if (stat && stat.count > 0) { sum += stat.sum; count += stat.count; }
+      }
+      if (count === 0) return;
 
-    let sum = 0, count = 0;
-    for (const gameStats of Object.values(m.stats.games)) {
-      const stat = gameStats[playerName];
-      if (stat && stat.count > 0) { sum += stat.sum; count += stat.count; }
-    }
-    if (count === 0) return;
-
-    matchHistory.push({
-      matchId: String(m.id),
-      homeTeam: m.home.code,
-      awayTeam: m.away.code,
-      date: m.date,
-      league: m.league,
-      avgRating: sum / count,
-      ratingCount: count,
+      matchHistory.push({
+        matchId: String(m.id),
+        homeTeam: m.home.code,
+        awayTeam: m.away.code,
+        date: m.date,
+        league: m.league,
+        avgRating: sum / count,
+        ratingCount: count,
+      });
     });
-  });
 
-  matchHistory.sort((a, b) => b.date.localeCompare(a.date));
+    matchHistory.sort((a, b) => b.date.localeCompare(a.date));
 
-  if (!playerInfo && matchHistory.length === 0) notFound();
+    if (!playerInfo && matchHistory.length === 0) notFound();
 
-  type PlayerInfo = { teamName: string; teamCode: string; teamLogo: string; position: Position; image?: string | null };
+  } catch (e: any) {
+    if (e?.digest?.startsWith('NEXT_NOT_FOUND')) throw e; // notFound() 전파
+    console.error('🔥 PlayerPage Error:', e);
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-500 flex items-center justify-center">
+        <div className="text-center"><div className="font-black text-red-400 mb-2">오류가 발생했어요</div><div className="text-xs">{e?.message}</div></div>
+      </div>
+    );
+  }
+
   const info = playerInfo as PlayerInfo | null;
   const totalCount = matchHistory.reduce((s, m) => s + m.ratingCount, 0);
   const seasonAvg = totalCount > 0
