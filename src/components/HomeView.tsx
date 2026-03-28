@@ -573,8 +573,8 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
           if (navigator.canShare?.({ files: [file] })) {
               await navigator.share({
                   files: [file],
-                  title: '협곡평점.GG',
-                  text: `${homeCode} vs ${awayCode} 경기 평점 결과`,
+                  title: `${match.date.replace(/-/g, '').substring(2, 8)} ${homeCode} vs ${awayCode}`,
+                  text: '협곡평점.GG',
                   url: shareUrl,
               });
               return;
@@ -589,7 +589,8 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
 
   const handleTwitterShare = (e: React.MouseEvent) => {
       e.stopPropagation();
-      const text = encodeURIComponent(`${homeCode} vs ${awayCode} 경기 평점 남겼어요 👇`);
+      const dateLabel = match.date.replace(/-/g, '').substring(2, 8);
+      const text = encodeURIComponent(`${dateLabel} ${homeCode} vs ${awayCode}`);
       const url = encodeURIComponent(`${window.location.origin}/?expanded=${match.id}`);
       window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'noopener');
   };
