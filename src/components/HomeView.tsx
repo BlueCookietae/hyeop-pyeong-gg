@@ -632,7 +632,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               )}
             </div>
             <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'home' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
-              <img src={isImagesReady ? teamLogos.home : (match.home.logo ? `https://wsrv.nl/?url=${match.home.logo.replace(/^https?:\/\//, '')}&output=png` : `/teams/${homeCode}.png`)} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
+              <img src={isImagesReady ? teamLogos.home : (match.home.logo ? `https://wsrv.nl/?url=${match.home.logo.replace(/^https?:\/\//, '')}&output=png` : `/teams/${homeCode}.png`)} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             </div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{homeCode}</span></motion.div>
           </div>
@@ -666,7 +666,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               )}
             </div>
             <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'away' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
-              <img src={isImagesReady ? teamLogos.away : (match.away.logo ? `https://wsrv.nl/?url=${match.away.logo.replace(/^https?:\/\//, '')}&output=png` : `/teams/${awayCode}.png`)} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
+              <img src={isImagesReady ? teamLogos.away : (match.away.logo ? `https://wsrv.nl/?url=${match.away.logo.replace(/^https?:\/\//, '')}&output=png` : `/teams/${awayCode}.png`)} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             </div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{awayCode}</span></motion.div>
           </div>

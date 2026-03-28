@@ -302,18 +302,14 @@ export async function GET(request: Request) {
                 }
             }
 
-            // 참여 팀 로스터 동기화
-            let teamCount = 0;
-            const teamErrors: string[] = [];
-            for (const teamId of teamIds) {
-                try {
-                    await syncTeamToDB(String(teamId));
-                    teamCount++;
-                } catch (e: any) {
-                    console.warn(`⚠️ Team sync failed for id=${teamId}:`, e.message);
-                    teamErrors.push(String(teamId));
-                }
-            }
+            // 참여 팀 로스터 병렬 동기화
+            const teamResults = await Promise.allSettled(
+                Array.from(teamIds).map(teamId => syncTeamToDB(String(teamId)))
+            );
+            const teamCount = teamResults.filter(r => r.status === 'fulfilled').length;
+            const teamErrors = teamResults
+                .map((r, i) => r.status === 'rejected' ? String(Array.from(teamIds)[i]) : null)
+                .filter(Boolean) as string[];
             console.log(`✅ Tournament Sync Done: ${count} matches, ${teamCount}/${teamIds.size} teams`);
 
             return NextResponse.json({ success: true, count, teamCount, totalTeams: teamIds.size, teamErrors, leagueId: targetId });
@@ -333,17 +329,13 @@ export async function GET(request: Request) {
                 if (m.opponents?.[1]?.opponent?.id) teamIds.add(m.opponents[1].opponent.id);
             }
 
-            let teamCount = 0;
-            const teamErrors: string[] = [];
-            for (const teamId of teamIds) {
-                try {
-                    await syncTeamToDB(String(teamId));
-                    teamCount++;
-                } catch (e: any) {
-                    console.warn(`⚠️ Team sync failed for id=${teamId}:`, e.message);
-                    teamErrors.push(String(teamId));
-                }
-            }
+            const teamResults = await Promise.allSettled(
+                Array.from(teamIds).map(teamId => syncTeamToDB(String(teamId)))
+            );
+            const teamCount = teamResults.filter(r => r.status === 'fulfilled').length;
+            const teamErrors = teamResults
+                .map((r, i) => r.status === 'rejected' ? String(Array.from(teamIds)[i]) : null)
+                .filter(Boolean) as string[];
             return NextResponse.json({ success: true, teamCount, totalTeams: teamIds.size, teamErrors, leagueId: targetId });
         }
 

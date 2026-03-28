@@ -83,7 +83,7 @@ function PlayerRankCard({ player, rank }: { player: PlayerRankData; rank: number
 
         <div className="w-12 h-12 rounded-xl bg-slate-800 overflow-hidden shrink-0 border border-slate-700">
           {player.image ? (
-            <img src={getProxiedUrl(player.image)} className="w-full h-full object-cover" alt={player.name} />
+            <img src={getProxiedUrl(player.image)} className="w-full h-full object-cover" alt={player.name} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-slate-500 text-sm font-black">
               {player.name[0]}

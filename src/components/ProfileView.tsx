@@ -217,11 +217,11 @@ export default function ProfileView() {
                           {m.matchInfo ? (
                             <>
                               <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <img src={getProxiedUrl(m.matchInfo.homeLogo)} className="w-7 h-7 object-contain shrink-0" alt={m.matchInfo.homeCode} />
+                                <img src={getProxiedUrl(m.matchInfo.homeLogo)} className="w-7 h-7 object-contain shrink-0" alt={m.matchInfo.homeCode} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                 <span className="font-black text-white text-sm uppercase tracking-tighter">{m.matchInfo.homeCode}</span>
                                 <span className="text-slate-600 text-xs font-bold">vs</span>
                                 <span className="font-black text-white text-sm uppercase tracking-tighter">{m.matchInfo.awayCode}</span>
-                                <img src={getProxiedUrl(m.matchInfo.awayLogo)} className="w-7 h-7 object-contain shrink-0" alt={m.matchInfo.awayCode} />
+                                <img src={getProxiedUrl(m.matchInfo.awayLogo)} className="w-7 h-7 object-contain shrink-0" alt={m.matchInfo.awayCode} onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                               </div>
                             </>
                           ) : (
