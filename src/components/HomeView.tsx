@@ -154,7 +154,10 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         if (currentTab === 0 && mDate >= kstToday) return false;
         if (currentTab === 1 && mDate !== kstToday) return false;
         if (currentTab === 2 && mDate <= kstToday) return false;
-        if (filterKey && `${m.league}|${m.round}` !== filterKey) return false;
+        if (filterKey) {
+            const mKey = m.league === 'LCK' ? `LCK|${m.round}` : m.league;
+            if (mKey !== filterKey) return false;
+        }
         if (krOnly && !KR_TEAM_CODES.has(m.home?.code) && !KR_TEAM_CODES.has(m.away?.code)) return false;
         return true;
     });
@@ -181,8 +184,8 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
       })
       .filter((m: any) => m.league && m.round)
       .map((m: any) => {
-        const key = `${m.league}|${m.round}`;
-        const label = `${m.league} ${m.round}`;
+        const key = m.league === 'LCK' ? `LCK|${m.round}` : m.league;
+        const label = m.league === 'LCK' ? `LCK ${m.round}` : m.league;
         return [key, label] as [string, string];
       })
   ).entries())
