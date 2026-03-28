@@ -71,7 +71,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [currentTab, setCurrentTab] = useState(1);
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
 
-  const [filterLeague, setFilterLeague] = useState<string | null>(null);
+  const [filterKey, setFilterKey] = useState<string | null>(null); // "league|round" 조합 키
   const [krOnly, setKrOnly] = useState(false);
   const [pastLimit, setPastLimit] = useState(20);
 
@@ -125,6 +125,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
     setCurrentTab(newTab);
     setExpandedIds([]);
     setPastLimit(20);
+    setFilterKey(null);
     window.scrollTo({ top: 0, behavior: 'auto' });
     router.replace('/', { scroll: false });
   };
@@ -153,7 +154,7 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         if (currentTab === 0 && mDate >= kstToday) return false;
         if (currentTab === 1 && mDate !== kstToday) return false;
         if (currentTab === 2 && mDate <= kstToday) return false;
-        if (filterLeague && m.league !== filterLeague) return false;
+        if (filterKey && `${m.league}|${m.round}` !== filterKey) return false;
         if (krOnly && !KR_TEAM_CODES.has(m.home?.code) && !KR_TEAM_CODES.has(m.away?.code)) return false;
         return true;
     });
@@ -169,8 +170,8 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const displayMatches = currentTab === 0 ? allFiltered.slice(0, pastLimit) : allFiltered;
   const hasMorePast = currentTab === 0 && allFiltered.length > pastLimit;
 
-  // 현재 탭의 매치에서 리그 목록 동적 생성
-  const availableLeagues = Array.from(new Set(
+  // 현재 탭의 매치에서 필터 옵션 동적 생성 (league|round 조합)
+  const availableFilters = Array.from(new Map(
     (Array.isArray(allMatches) ? allMatches : [])
       .filter((m: any) => {
         const mDate = getKSTDateString(m.date);
@@ -178,9 +179,15 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         if (currentTab === 1) return mDate === getKSTDateString();
         return mDate > getKSTDateString();
       })
-      .map((m: any) => m.league)
-      .filter(Boolean)
-  )).sort();
+      .filter((m: any) => m.league && m.round)
+      .map((m: any) => {
+        const key = `${m.league}|${m.round}`;
+        const label = `${m.league} ${m.round}`;
+        return [key, label] as [string, string];
+      })
+  ).entries())
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
@@ -216,28 +223,26 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
       </div>
 
       {/* 필터 바 */}
-      {(availableLeagues.length > 1 || true) && (
-        <div className="sticky top-[74px] z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/30">
-          <div className="max-w-md mx-auto px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
+      <div className="sticky top-[74px] z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/30">
+        <div className="max-w-md mx-auto px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          <button
+            onClick={() => setKrOnly(v => !v)}
+            className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${krOnly ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+          >🇰🇷 KR팀</button>
+          <div className="w-px h-4 bg-slate-700 shrink-0" />
+          <button
+            onClick={() => setFilterKey(null)}
+            className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterKey === null ? 'bg-slate-200 text-black border-slate-200' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+          >전체</button>
+          {availableFilters.map(({ key, label }) => (
             <button
-              onClick={() => setKrOnly(v => !v)}
-              className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${krOnly ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
-            >🇰🇷 KR팀</button>
-            <div className="w-px h-4 bg-slate-700 shrink-0" />
-            <button
-              onClick={() => setFilterLeague(null)}
-              className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterLeague === null ? 'bg-slate-200 text-black border-slate-200' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
-            >전체</button>
-            {availableLeagues.map(league => (
-              <button
-                key={league}
-                onClick={() => setFilterLeague(filterLeague === league ? null : league)}
-                className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterLeague === league ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
-              >{league}</button>
-            ))}
-          </div>
+              key={key}
+              onClick={() => setFilterKey(filterKey === key ? null : key)}
+              className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterKey === key ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+            >{label}</button>
+          ))}
         </div>
-      )}
+      </div>
 
       <div className="max-w-md mx-auto p-4 min-h-[50vh]">
         <AnimatePresence mode='wait'>
