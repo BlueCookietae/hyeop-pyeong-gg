@@ -28,6 +28,7 @@ const dataURItoBlob = (dataURI: string) => {
 const urlToBase64 = async (url: string) => {
   try {
     const response = await fetch(url);
+    if (!response.ok) return null;
     const blob = await response.blob();
     return new Promise((resolve) => {
       const reader = new FileReader();
