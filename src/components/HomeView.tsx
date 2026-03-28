@@ -233,10 +233,6 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
             className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${krOnly ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
           >🇰🇷 KR팀</button>
           <div className="w-px h-4 bg-slate-700 shrink-0" />
-          <button
-            onClick={() => setFilterKey(null)}
-            className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterKey === null ? 'bg-slate-200 text-black border-slate-200' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
-          >전체</button>
           {availableFilters.map(({ key, label }) => (
             <button
               key={key}
