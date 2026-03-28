@@ -324,12 +324,18 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
     if (!isOpen) return;
     const preloadLogos = async () => {
         const origin = window.location.origin;
-        const [h, a] = await Promise.all([urlToBase64(`${origin}/teams/${homeCode}.png`), urlToBase64(`${origin}/teams/${awayCode}.png`)]);
-        setTeamLogos({ home: (h as string) || `/teams/${homeCode}.png`, away: (a as string) || `/teams/${awayCode}.png` });
+        const proxied = (url?: string) => url ? `https://wsrv.nl/?url=${url.replace(/^https?:\/\//, '')}&output=png` : null;
+        // 로컬 파일 우선, 없으면 PandaScore URL (wsrv.nl 프록시)
+        const homeSrc = `${origin}/teams/${homeCode}.png`;
+        const awaySrc = `${origin}/teams/${awayCode}.png`;
+        const homeFallback = proxied(match.home.logo) || homeSrc;
+        const awayFallback = proxied(match.away.logo) || awaySrc;
+        const [h, a] = await Promise.all([urlToBase64(homeSrc), urlToBase64(awaySrc)]);
+        setTeamLogos({ home: (h as string) || homeFallback, away: (a as string) || awayFallback });
         setIsImagesReady(true);
     };
     preloadLogos();
-  }, [homeCode, awayCode, isOpen]);
+  }, [homeCode, awayCode, isOpen, match.home.logo, match.away.logo]);
 
   useEffect(() => { if (!isOpen) { hasScrolledRef.current = false; setIsImagesReady(false); setActiveGameId('ALL'); } }, [isOpen]);
 
@@ -563,7 +569,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               )}
             </div>
             <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'home' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
-              <img src={isImagesReady ? teamLogos.home : `/teams/${homeCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
+              <img src={isImagesReady ? teamLogos.home : (match.home.logo ? `https://wsrv.nl/?url=${match.home.logo.replace(/^https?:\/\//, '')}&output=png` : `/teams/${homeCode}.png`)} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
             </div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{homeCode}</span></motion.div>
           </div>
@@ -597,7 +603,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
               )}
             </div>
             <div className={`w-16 h-16 rounded-xl transition-all ${!isStarted && userPick === 'away' ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''}`}>
-              <img src={isImagesReady ? teamLogos.away : `/teams/${awayCode}.png`} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
+              <img src={isImagesReady ? teamLogos.away : (match.away.logo ? `https://wsrv.nl/?url=${match.away.logo.replace(/^https?:\/\//, '')}&output=png` : `/teams/${awayCode}.png`)} className={`w-full h-full object-contain drop-shadow-xl ${isImagesReady ? (isOpen || isLive ? 'opacity-100' : 'opacity-50') : 'opacity-50'}`} />
             </div>
             <motion.div animate={{ height: isOpen ? 0 : 'auto', opacity: isOpen ? 0 : 1 }} className="h-10 flex items-center justify-center mt-2"><span className="text-lg font-black text-white uppercase tracking-tighter">{awayCode}</span></motion.div>
           </div>
