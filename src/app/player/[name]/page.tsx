@@ -33,6 +33,7 @@ type MatchEntry = {
   league: string;
   avgRating: number;
   ratingCount: number;
+  bestGameIndex: number;
 };
 
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
@@ -82,11 +83,18 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
       const m = serializeData({ id: doc.id, ...doc.data() }) as Match;
       if (m.status !== 'FINISHED' || !m.stats?.games || !m.home || !m.away) return;
       let sum = 0, count = 0;
-      for (const gameStats of Object.values(m.stats.games)) {
+      let bestGameAvg = -1, bestGameId = '';
+      for (const [gameId, gameStats] of Object.entries(m.stats.games)) {
         const stat = gameStats[playerName];
-        if (stat && stat.count > 0) { sum += stat.sum; count += stat.count; }
+        if (stat && stat.count > 0) {
+          sum += stat.sum; count += stat.count;
+          const gameAvg = stat.sum / stat.count;
+          if (gameAvg > bestGameAvg) { bestGameAvg = gameAvg; bestGameId = gameId; }
+        }
       }
       if (count === 0) return;
+      const sortedGames = [...(m.games || [])].sort((a: any, b: any) => a.position - b.position);
+      const bestGameIndex = Math.max(1, sortedGames.findIndex((g: any) => String(g.id) === bestGameId) + 1);
       matchHistory.push({
         matchId: String(m.id),
         homeTeam: m.home.code ?? m.home.name ?? '?',
@@ -95,6 +103,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
         league: m.league ?? '',
         avgRating: sum / count,
         ratingCount: count,
+        bestGameIndex,
       });
     });
 
@@ -197,7 +206,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
               {matchHistory.map(m => {
                 const color = m.avgRating >= 8 ? 'text-red-400' : m.avgRating >= 6 ? 'text-cyan-400' : 'text-slate-500';
                 return (
-                  <Link key={m.matchId} href={`/match/${m.matchId}?player=${encodeURIComponent(playerName)}`}
+                  <Link key={m.matchId} href={`/match/${m.matchId}?player=${encodeURIComponent(playerName)}&game=${m.bestGameIndex}`}
                     className="block bg-slate-900 border border-slate-800 hover:border-slate-600 rounded-2xl p-4 transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="flex-1 min-w-0">

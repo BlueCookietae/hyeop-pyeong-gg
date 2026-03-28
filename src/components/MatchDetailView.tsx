@@ -86,9 +86,14 @@ export default function MatchDetailView({ matchData, initialRosters }: Props) {
         if (initialRosters[side][POSITIONS[i]]?.some((p: any) => p.name === focusPlayer)) {
           setSelectedTeamSide(side);
           setActivePosIndex(i);
-          return;
+          break;
         }
       }
+    }
+    const focusGame = searchParams.get('game');
+    if (focusGame) {
+      const gameNum = parseInt(focusGame);
+      if (!isNaN(gameNum) && gameNum >= 1) setActiveGameIndex(gameNum);
     }
   }, [focusPlayer]);
 
