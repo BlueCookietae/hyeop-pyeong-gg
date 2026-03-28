@@ -440,10 +440,30 @@ function ExpandedCard({ matchId, gameId, gameIndex, pos, mainPlayer, subPlayer, 
     const handleShare = async () => {
         if (!cardRef.current) return;
         try {
-            const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#0a0a0c', pixelRatio: 2, cacheBust: true });
+            // CORS 버그 방지: 캡처 전에 이미지를 blob URL로 교체
+            const imgs = Array.from(cardRef.current.querySelectorAll('img'));
+            const origSrcs = imgs.map(img => img.src);
+            await Promise.all(imgs.map(async (img) => {
+                try {
+                    const res = await fetch(img.src, { mode: 'cors', cache: 'no-store' });
+                    if (res.ok) {
+                        const b = await res.blob();
+                        img.src = URL.createObjectURL(b);
+                    }
+                } catch {}
+            }));
+
+            const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#0a0a0c', pixelRatio: 2 });
+
+            // blob URL 해제 후 원본 복원
+            imgs.forEach((img, i) => {
+                if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+                img.src = origSrcs[i];
+            });
+
             const blob = dataURItoBlob(dataUrl);
-            const file = new File([blob], 'card.png', { type: 'image/png' });
-            if (navigator.share) await navigator.share({ files: [file] });
+            const file = new File([blob], `match_${matchId}.png`, { type: 'image/png' });
+            if (navigator.share) await navigator.share({ files: [file], title: `${mainTeam.code} vs ${subTeam.code} 평점` });
         } catch (e) { alert("Share failed"); }
     };
 
