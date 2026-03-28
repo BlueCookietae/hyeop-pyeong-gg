@@ -65,9 +65,9 @@ export default async function RankingPage() {
         }
       }
 
-      // 전체 집계에 반영 (경기당 최소 3개 평점)
+      // 전체 집계에 반영
       for (const [playerName, stat] of Object.entries(matchPlayerStats)) {
-        if (stat.count < 3) continue;
+        if (stat.count < 1) continue;
 
         if (!playerStats[playerName]) {
           playerStats[playerName] = { totalSum: 0, totalCount: 0, matchHighlights: [] };
@@ -87,7 +87,7 @@ export default async function RankingPage() {
 
     // 4. 랭킹 데이터 생성 (최소 5개 평점 필터)
     const rankingData: PlayerRankData[] = Object.entries(playerStats)
-      .filter(([name, stats]) => playerInfoMap[name] && stats.totalCount >= 5)
+      .filter(([name, stats]) => playerInfoMap[name] && stats.totalCount >= 1)
       .map(([name, stats]) => {
         const info = playerInfoMap[name];
         const avgRating = stats.totalSum / stats.totalCount;
