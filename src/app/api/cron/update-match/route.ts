@@ -282,19 +282,69 @@ export async function GET(request: Request) {
             return NextResponse.json(result);
         }
 
-        // 5. 국제전 토너먼트 동기화 (league_id 직접 지정)
-        //    예: /api/cron/update-match?mode=sync_tournament&leagueId=5 (Worlds)
+        // 5. 국제전 토너먼트 동기화 (league_id 직접 지정) + 참여 팀 로스터 자동 sync
+        //    예: /api/cron/update-match?mode=sync_tournament&id=5 (Worlds)
         if (mode === 'sync_tournament' && targetId) {
             await ensureAuth();
             console.log(`🌏 Syncing tournament: league_id=${targetId}`);
             const url = `https://api.pandascore.co/lol/matches?filter[league_id]=${targetId}&range[begin_at]=2024-01-01T00:00:00Z,2026-12-31T23:59:59Z&per_page=100&sort=begin_at`;
             const matches = await fetchPanda(url);
+
+            // 경기 저장 + 참여 팀 ID 수집
             let count = 0;
+            const teamIds = new Set<number>();
             for (const m of matches) {
                 const saved = await saveMatchToDB(m);
-                if (saved) count++;
+                if (saved) {
+                    count++;
+                    if (m.opponents?.[0]?.opponent?.id) teamIds.add(m.opponents[0].opponent.id);
+                    if (m.opponents?.[1]?.opponent?.id) teamIds.add(m.opponents[1].opponent.id);
+                }
             }
-            return NextResponse.json({ success: true, count, leagueId: targetId });
+
+            // 참여 팀 로스터 동기화
+            let teamCount = 0;
+            const teamErrors: string[] = [];
+            for (const teamId of teamIds) {
+                try {
+                    await syncTeamToDB(String(teamId));
+                    teamCount++;
+                } catch (e: any) {
+                    console.warn(`⚠️ Team sync failed for id=${teamId}:`, e.message);
+                    teamErrors.push(String(teamId));
+                }
+            }
+            console.log(`✅ Tournament Sync Done: ${count} matches, ${teamCount}/${teamIds.size} teams`);
+
+            return NextResponse.json({ success: true, count, teamCount, totalTeams: teamIds.size, teamErrors, leagueId: targetId });
+        }
+
+        // 6. 팀 로스터만 동기화 (리그 ID로 참여 팀 추출)
+        //    예: /api/cron/update-match?mode=sync_teams&id=293
+        if (mode === 'sync_teams' && targetId) {
+            await ensureAuth();
+            console.log(`👥 Syncing teams for league_id=${targetId}`);
+            const url = `https://api.pandascore.co/lol/matches?filter[league_id]=${targetId}&range[begin_at]=2024-01-01T00:00:00Z,2026-12-31T23:59:59Z&per_page=100&sort=begin_at`;
+            const matches = await fetchPanda(url);
+
+            const teamIds = new Set<number>();
+            for (const m of matches) {
+                if (m.opponents?.[0]?.opponent?.id) teamIds.add(m.opponents[0].opponent.id);
+                if (m.opponents?.[1]?.opponent?.id) teamIds.add(m.opponents[1].opponent.id);
+            }
+
+            let teamCount = 0;
+            const teamErrors: string[] = [];
+            for (const teamId of teamIds) {
+                try {
+                    await syncTeamToDB(String(teamId));
+                    teamCount++;
+                } catch (e: any) {
+                    console.warn(`⚠️ Team sync failed for id=${teamId}:`, e.message);
+                    teamErrors.push(String(teamId));
+                }
+            }
+            return NextResponse.json({ success: true, teamCount, totalTeams: teamIds.size, teamErrors, leagueId: targetId });
         }
 
         return NextResponse.json({ error: "Invalid mode parameter" }, { status: 400 });

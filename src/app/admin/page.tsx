@@ -30,6 +30,7 @@ export default function AdminPage() {
   const [syncInput, setSyncInput] = useState('');
   const [tournamentLeagueId, setTournamentLeagueId] = useState('');
   const [isSyncingTournament, setIsSyncingTournament] = useState(false);
+  const [isSyncingTeams, setIsSyncingTeams] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -93,15 +94,28 @@ export default function AdminPage() {
 
   const handleSyncTournament = async () => {
     if (!tournamentLeagueId) return alert("League ID를 입력하세요.");
-    if (!confirm(`리그 ID ${tournamentLeagueId}의 국제전 경기를 동기화합니다.`)) return;
+    if (!confirm(`리그 ID ${tournamentLeagueId}의 국제전 경기 + 팀 로스터를 동기화합니다.`)) return;
     setIsSyncingTournament(true);
     try {
       const res = await fetch(`/api/cron/update-match?mode=sync_tournament&id=${encodeURIComponent(tournamentLeagueId)}`);
       const data = await res.json();
-      if (data.success) alert(`✅ ${data.count}개 경기 동기화 완료! (league: ${data.leagueId})`);
+      if (data.success) alert(`✅ 경기 ${data.count}개 + 팀 ${data.teamCount}/${data.totalTeams}개 동기화 완료!`);
       else alert(`실패: ${data.error}`);
     } catch (e: any) { alert(e.message); }
     finally { setIsSyncingTournament(false); }
+  };
+
+  const handleSyncTeamsOnly = async () => {
+    if (!tournamentLeagueId) return alert("League ID를 입력하세요.");
+    if (!confirm(`리그 ID ${tournamentLeagueId}의 팀 로스터만 동기화합니다.`)) return;
+    setIsSyncingTeams(true);
+    try {
+      const res = await fetch(`/api/cron/update-match?mode=sync_teams&id=${encodeURIComponent(tournamentLeagueId)}`);
+      const data = await res.json();
+      if (data.success) alert(`✅ 팀 ${data.teamCount}/${data.totalTeams}개 로스터 동기화 완료!`);
+      else alert(`실패: ${data.error}`);
+    } catch (e: any) { alert(e.message); }
+    finally { setIsSyncingTeams(false); }
   };
 
   const handleInspect = async () => {
@@ -163,10 +177,11 @@ export default function AdminPage() {
                 <div className="mt-3 bg-black/30 rounded-xl p-4 border border-slate-800/50">
                     <h3 className="text-[10px] font-bold text-purple-400 mb-3 uppercase">🌏 Sync Tournament (국제전 과거 경기)</h3>
                     <div className="flex gap-2">
-                        <input value={tournamentLeagueId} onChange={e => setTournamentLeagueId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSyncTournament()} placeholder="League ID (e.g. 5 for Worlds)" className="flex-1 bg-slate-950 px-3 py-2 text-xs rounded-lg border border-slate-700 outline-none focus:border-purple-500" />
-                        <button onClick={handleSyncTournament} disabled={isSyncingTournament} className="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors">{isSyncingTournament ? '...' : 'SYNC'}</button>
+                        <input value={tournamentLeagueId} onChange={e => setTournamentLeagueId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSyncTournament()} placeholder="League ID (Inspector에서 확인)" className="flex-1 bg-slate-950 px-3 py-2 text-xs rounded-lg border border-slate-700 outline-none focus:border-purple-500" />
+                        <button onClick={handleSyncTournament} disabled={isSyncingTournament || isSyncingTeams} className="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap">{isSyncingTournament ? '...' : '경기+팀 SYNC'}</button>
+                        <button onClick={handleSyncTeamsOnly} disabled={isSyncingTournament || isSyncingTeams} className="bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap">{isSyncingTeams ? '...' : '팀만 SYNC'}</button>
                     </div>
-                    <p className="text-[9px] text-slate-600 mt-2">Inspector에서 League Name 검색 후 league_id 확인 → 여기서 동기화</p>
+                    <p className="text-[9px] text-slate-600 mt-2">Inspector → League Name 검색 → id 확인 → SYNC | 경기+팀 동시 or 팀 로스터만 별도 동기화 가능</p>
                 </div>
             </div>
 
