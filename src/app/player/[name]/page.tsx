@@ -7,6 +7,7 @@ import { serializeData, getRosterMap } from '@/lib/lck-utils';
 import { APP_ID, POSITIONS, POS_ICONS } from '@/constants/config';
 import type { Match, Player, Position } from '@/types';
 import BottomTabBar from '@/components/BottomTabBar';
+import SafeImg from '@/components/SafeImg';
 
 export const revalidate = 3600;
 
@@ -138,8 +139,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex items-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-slate-800 overflow-hidden border border-slate-700 shrink-0">
             {info?.image ? (
-              <img src={getProxiedUrl(info.image)} className="w-full h-full object-cover" alt={playerName}
-                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              <SafeImg src={getProxiedUrl(info.image)} className="w-full h-full object-cover" alt={playerName} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-500 text-xl font-black">{playerName[0]}</div>
             )}
@@ -149,9 +149,8 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
             {info && (
               <div className="flex items-center gap-2 mt-1">
                 {info.teamLogo && (
-                  <img src={info.teamLogo.startsWith('/') ? info.teamLogo : getProxiedUrl(info.teamLogo)}
-                    className="w-4 h-4 object-contain" alt={info.teamCode}
-                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  <SafeImg src={info.teamLogo.startsWith('/') ? info.teamLogo : getProxiedUrl(info.teamLogo)}
+                    className="w-4 h-4 object-contain" alt={info.teamCode} />
                 )}
                 <span className="text-xs text-slate-400 font-bold">{info.teamCode}</span>
                 <span className="flex items-center gap-1">
