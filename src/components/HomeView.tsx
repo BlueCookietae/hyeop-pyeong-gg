@@ -567,7 +567,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
           const dataUrl = await htmlToImage.toPng(cardRef.current, { backgroundColor: '#020617', pixelRatio: 3, skipAutoScale: true });
           const blob = dataURItoBlob(dataUrl);
           const file = new File([blob], `match_${match.id}.png`, { type: 'image/png' });
-          const shareUrl = `${window.location.origin}/match/${match.id}`;
+          const shareUrl = `${window.location.origin}/?expanded=${match.id}`;
 
           // 모바일: 네이티브 공유 시트 (카카오톡, 트위터, 인스타 등)
           if (navigator.canShare?.({ files: [file] })) {
@@ -590,7 +590,7 @@ function MatchCard({ match, rosters, isOpen, isTarget, isClicked, isFocused, las
   const handleTwitterShare = (e: React.MouseEvent) => {
       e.stopPropagation();
       const text = encodeURIComponent(`${homeCode} vs ${awayCode} 경기 평점 남겼어요 👇`);
-      const url = encodeURIComponent(`${window.location.origin}/match/${match.id}`);
+      const url = encodeURIComponent(`${window.location.origin}/?expanded=${match.id}`);
       window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'noopener');
   };
 
