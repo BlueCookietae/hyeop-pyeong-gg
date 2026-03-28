@@ -70,7 +70,13 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const [allMatches, setAllMatches] = useState<Match[]>(initialMatches || []);
   const [currentTab, setCurrentTab] = useState(1);
   const TAB_NAMES = ['지난 경기', '오늘의 경기', '다가오는 경기'];
-  
+
+  const [filterLeague, setFilterLeague] = useState<string | null>(null);
+  const [krOnly, setKrOnly] = useState(false);
+  const [pastLimit, setPastLimit] = useState(20);
+
+  const KR_TEAM_CODES = new Set(['T1','GEN','HLE','KT','DK','DRX','BRO','NS','BFX','KRX','DNS']);
+
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
   
@@ -117,7 +123,8 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   const changeTab = (newTab: number) => {
     if (newTab < 0 || newTab > 2) return;
     setCurrentTab(newTab);
-    setExpandedIds([]); 
+    setExpandedIds([]);
+    setPastLimit(20);
     window.scrollTo({ top: 0, behavior: 'auto' });
     router.replace('/', { scroll: false });
   };
@@ -138,25 +145,42 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
   };
 
   const getFilteredMatches = () => {
-    const safeMatches = Array.isArray(allMatches) ? allMatches : []; 
+    const safeMatches = Array.isArray(allMatches) ? allMatches : [];
     const kstToday = getKSTDateString();
-    
-    const filterFn = (m: any) => {
+
+    const filtered = safeMatches.filter((m: any) => {
         const mDate = getKSTDateString(m.date);
-        if (currentTab === 0) return mDate < kstToday;
-        if (currentTab === 1) return mDate === kstToday;
-        return mDate > kstToday;
-    };
+        if (currentTab === 0 && mDate >= kstToday) return false;
+        if (currentTab === 1 && mDate !== kstToday) return false;
+        if (currentTab === 2 && mDate <= kstToday) return false;
+        if (filterLeague && m.league !== filterLeague) return false;
+        if (krOnly && !KR_TEAM_CODES.has(m.home?.code) && !KR_TEAM_CODES.has(m.away?.code)) return false;
+        return true;
+    });
 
-    const sortFn = (a: any, b: any) => {
-        return currentTab === 0 
-            ? b.date.localeCompare(a.date) 
-            : a.date.localeCompare(b.date);
-    };
+    filtered.sort((a: any, b: any) =>
+        currentTab === 0 ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)
+    );
 
-    return safeMatches.filter(filterFn).sort(sortFn);
+    return filtered;
   };
-  const displayMatches = getFilteredMatches();
+
+  const allFiltered = getFilteredMatches();
+  const displayMatches = currentTab === 0 ? allFiltered.slice(0, pastLimit) : allFiltered;
+  const hasMorePast = currentTab === 0 && allFiltered.length > pastLimit;
+
+  // 현재 탭의 매치에서 리그 목록 동적 생성
+  const availableLeagues = Array.from(new Set(
+    (Array.isArray(allMatches) ? allMatches : [])
+      .filter((m: any) => {
+        const mDate = getKSTDateString(m.date);
+        if (currentTab === 0) return mDate < getKSTDateString();
+        if (currentTab === 1) return mDate === getKSTDateString();
+        return mDate > getKSTDateString();
+      })
+      .map((m: any) => m.league)
+      .filter(Boolean)
+  )).sort();
 
   return (
     <div className="bg-slate-950 min-h-screen text-slate-50 font-sans pb-20">
@@ -191,6 +215,30 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
         </div>
       </div>
 
+      {/* 필터 바 */}
+      {(availableLeagues.length > 1 || true) && (
+        <div className="sticky top-[74px] z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/30">
+          <div className="max-w-md mx-auto px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setKrOnly(v => !v)}
+              className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${krOnly ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+            >🇰🇷 KR팀</button>
+            <div className="w-px h-4 bg-slate-700 shrink-0" />
+            <button
+              onClick={() => setFilterLeague(null)}
+              className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterLeague === null ? 'bg-slate-200 text-black border-slate-200' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+            >전체</button>
+            {availableLeagues.map(league => (
+              <button
+                key={league}
+                onClick={() => setFilterLeague(filterLeague === league ? null : league)}
+                className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-black border transition-colors ${filterLeague === league ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+              >{league}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="max-w-md mx-auto p-4 min-h-[50vh]">
         <AnimatePresence mode='wait'>
           <motion.div 
@@ -203,24 +251,34 @@ export default function HomeView({ initialMatches, initialRosters }: { initialMa
           >
             {displayMatches.length === 0 ? (
               <div className="text-center text-slate-600 font-bold py-20 bg-slate-900/30 rounded-3xl border border-slate-800 border-dashed">
-                {isRestoring ? '경기 정보를 불러오는 중...' : '예정된 경기가 없습니다.'}
+                {isRestoring ? '경기 정보를 불러오는 중...' : '경기가 없습니다.'}
               </div>
             ) : (
-              displayMatches.map((match) => (
-                <MatchCard 
-                  key={match.id} 
-                  match={match} 
-                  rosters={initialRosters}
-                  isOpen={expandedIds.includes(String(match.id))}
-                  isTarget={String(targetId) === String(match.id)}
-                  isFocused={String(focusId) === String(match.id)}
-                  isClicked={String(lastClickedId) === String(match.id)}
-                  lastClickedId={lastClickedId}
-                  onToggle={(isOpenNow: boolean) => toggleCard(String(match.id), isOpenNow)}
-                  onRestoreComplete={() => setIsRestoring(false)}
-                  onStatsUpdate={handleStatsUpdate}
-                />
-              ))
+              <>
+                {displayMatches.map((match) => (
+                  <MatchCard
+                    key={match.id}
+                    match={match}
+                    rosters={initialRosters}
+                    isOpen={expandedIds.includes(String(match.id))}
+                    isTarget={String(targetId) === String(match.id)}
+                    isFocused={String(focusId) === String(match.id)}
+                    isClicked={String(lastClickedId) === String(match.id)}
+                    lastClickedId={lastClickedId}
+                    onToggle={(isOpenNow: boolean) => toggleCard(String(match.id), isOpenNow)}
+                    onRestoreComplete={() => setIsRestoring(false)}
+                    onStatsUpdate={handleStatsUpdate}
+                  />
+                ))}
+                {hasMorePast && (
+                  <button
+                    onClick={() => setPastLimit(v => v + 20)}
+                    className="w-full py-3 rounded-2xl border border-slate-800 text-slate-500 text-xs font-black hover:border-slate-600 hover:text-slate-300 transition-colors"
+                  >
+                    더 보기 ({allFiltered.length - pastLimit}경기 남음)
+                  </button>
+                )}
+              </>
             )}
           </motion.div>
         </AnimatePresence>
