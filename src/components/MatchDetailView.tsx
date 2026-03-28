@@ -475,7 +475,8 @@ function ExpandedCard({ matchId, gameId, gameIndex, pos, mainPlayer, subPlayer, 
 
             const blob = dataURItoBlob(dataUrl);
             const file = new File([blob], `match_${matchId}.png`, { type: 'image/png' });
-            if (navigator.share) await navigator.share({ files: [file], title: `${mainTeam.code} vs ${subTeam.code} 평점` });
+            const cardUrl = `${window.location.origin}/match/${matchId}?player=${encodeURIComponent(mainPlayer.name)}&game=${gameIndex}`;
+            if (navigator.share) await navigator.share({ files: [file], title: `${mainTeam.code} vs ${subTeam.code} · ${mainPlayer.name} 평점`, url: cardUrl });
         } catch (e) { alert("Share failed"); }
     };
 
