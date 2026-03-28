@@ -99,10 +99,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
 
     matchHistory.sort((a, b) => b.date.localeCompare(a.date));
 
-    if (!playerInfo && matchHistory.length === 0) notFound();
-
   } catch (e: any) {
-    if (e?.digest) throw e;
     return (
       <div className="min-h-screen bg-slate-950 text-slate-500 flex items-center justify-center">
         <div className="text-center">
@@ -112,6 +109,8 @@ export default async function PlayerPage({ params }: { params: Promise<{ name: s
       </div>
     );
   }
+
+  if (!playerInfo && matchHistory.length === 0) notFound();
 
   const info = playerInfo as PlayerInfo | null;
   const totalCount = matchHistory.reduce((s, m) => s + m.ratingCount, 0);
