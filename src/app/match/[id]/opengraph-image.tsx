@@ -144,20 +144,21 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         fontFamily: 'sans-serif',
         overflow: 'hidden',
       }}>
-        {/* 배경 이미지 */}
+        {/* 배경 이미지 — 흑백 */}
         {bgBase64 && (
           <img src={bgBase64} style={{
             position: 'absolute', top: 0, left: 0,
             width: '100%', height: '100%',
             objectFit: 'cover',
+            filter: 'grayscale(1)',
           }} />
         )}
 
-        {/* 흰색 오버레이 — 배경 밝히기 */}
+        {/* 흰색 오버레이 */}
         <div style={{
           position: 'absolute', top: 0, left: 0,
           width: '100%', height: '100%',
-          background: 'rgba(255,255,255,0.60)',
+          background: 'rgba(255,255,255,0.78)',
           display: 'flex',
         }} />
 
@@ -168,59 +169,59 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         }}>
           {/* 헤더 */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <div style={{ fontSize: 22, color: textMuted, fontWeight: 700, letterSpacing: 3, display: 'flex' }}>{dateLabel}</div>
-            <div style={{ fontSize: 20, color: '#7c3aed', fontWeight: 900, letterSpacing: 1, display: 'flex' }}>협곡평점.GG</div>
+            <div style={{ fontSize: 22, color: '#6b7280', fontWeight: 700, letterSpacing: 3, display: 'flex' }}>{dateLabel}</div>
+            <div style={{ fontSize: 20, color: '#111827', fontWeight: 900, letterSpacing: 1, display: 'flex' }}>협곡평점.GG</div>
           </div>
 
-          {/* 팀 섹션: 로고+팀명이 스코어 바로 양옆 */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 32, marginBottom: hasRatings ? 18 : 0 }}>
+          {/* 팀 섹션 */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 32, marginBottom: hasRatings ? 16 : 0 }}>
 
-            {/* 홈팀: 팀명 + 로고 (오른쪽 정렬) */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            {/* 홈팀 */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
               {homeLogo
                 ? <img src={homeLogo} style={{ width: 64, height: 64, objectFit: 'contain' }} />
-                : <div style={{ width: 64, height: 64, background: 'rgba(0,0,0,0.1)', borderRadius: 10, display: 'flex' }} />}
-              <span style={{ fontSize: 28, fontWeight: 900, fontStyle: 'italic', color: textPrimary, letterSpacing: -1, display: 'flex' }}>{homeCode}</span>
+                : <div style={{ width: 64, height: 64, background: 'rgba(0,0,0,0.08)', borderRadius: 10, display: 'flex' }} />}
+              <span style={{ fontSize: 14, fontWeight: 900, color: '#111827', letterSpacing: 1, display: 'flex' }}>{homeCode}</span>
             </div>
 
-            {/* 스코어 */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            {/* 스코어 + 리그 배지 */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              {/* 리그 배지 — 검정 바탕 흰 글씨 */}
+              <div style={{
+                background: '#111827', borderRadius: 6,
+                padding: '3px 12px', display: 'flex',
+              }}>
+                <span style={{ fontSize: 11, color: 'white', fontWeight: 900, letterSpacing: 3, textTransform: 'uppercase', display: 'flex' }}>{league}</span>
+              </div>
               {isFinished ? (
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
                   <span style={{ fontSize: 64, fontWeight: 900, color: homeWin ? '#dc2626' : '#374151', display: 'flex', lineHeight: 1 }}>{homeScore}</span>
-                  <span style={{ fontSize: 28, color: '#9ca3af', fontWeight: 700, display: 'flex' }}>:</span>
+                  <span style={{ fontSize: 28, color: '#9ca3af', fontWeight: 700, display: 'flex', paddingBottom: 4 }}>:</span>
                   <span style={{ fontSize: 64, fontWeight: 900, color: awayWin ? '#dc2626' : '#374151', display: 'flex', lineHeight: 1 }}>{awayScore}</span>
                 </div>
               ) : (
                 <div style={{ fontSize: 40, color: '#9ca3af', fontWeight: 900, display: 'flex' }}>vs</div>
               )}
-              <div style={{ fontSize: 12, color: textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 3, display: 'flex' }}>{league}</div>
             </div>
 
-            {/* 어웨이팀: 로고 + 팀명 (왼쪽 정렬) */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            {/* 어웨이팀 */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
               {awayLogo
                 ? <img src={awayLogo} style={{ width: 64, height: 64, objectFit: 'contain' }} />
-                : <div style={{ width: 64, height: 64, background: 'rgba(0,0,0,0.1)', borderRadius: 10, display: 'flex' }} />}
-              <span style={{ fontSize: 28, fontWeight: 900, fontStyle: 'italic', color: textPrimary, letterSpacing: -1, display: 'flex' }}>{awayCode}</span>
+                : <div style={{ width: 64, height: 64, background: 'rgba(0,0,0,0.08)', borderRadius: 10, display: 'flex' }} />}
+              <span style={{ fontSize: 14, fontWeight: 900, color: '#111827', letterSpacing: 1, display: 'flex' }}>{awayCode}</span>
             </div>
           </div>
 
-          {/* 구분선 */}
-          {hasRatings && (
-            <div style={{ height: 1, background: 'rgba(109,40,217,0.2)', marginBottom: 10, display: 'flex' }} />
-          )}
-
-          {/* 포지션별 평점 */}
+          {/* 포지션별 평점 — 선 없음 */}
           {hasRatings && posRows.map(({ pos, home, away }) => (
             <div key={pos} style={{
               display: 'flex', alignItems: 'center',
-              padding: '6px 0',
-              borderBottom: '1px solid rgba(109,40,217,0.1)',
+              padding: '7px 0',
             }}>
               {/* 홈 선수명 */}
               <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', paddingRight: 12 }}>
-                <span style={{ fontSize: 20, color: '#1f2937', fontWeight: 600, display: 'flex' }}>{home?.name ?? ''}</span>
+                <span style={{ fontSize: 20, color: '#111827', fontWeight: 800, fontStyle: 'italic', display: 'flex' }}>{home?.name ?? ''}</span>
               </div>
 
               {/* 홈 평점 박스 */}
@@ -233,11 +234,11 @@ export default async function Image({ params }: { params: Promise<{ id: string }
                 {home && <span style={{ fontSize: 18, fontWeight: 900, color: 'white', display: 'flex' }}>{home.avg.toFixed(1)}</span>}
               </div>
 
-              {/* 포지션 아이콘 */}
-              <div style={{ width: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {/* 포지션 아이콘 — 가운데 */}
+              <div style={{ width: 36, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {iconBase64[pos]
-                  ? <img src={iconBase64[pos]} style={{ width: 20, height: 20, objectFit: 'contain', opacity: 0.4 }} />
-                  : <span style={{ fontSize: 10, color: textMuted, fontWeight: 700, display: 'flex' }}>{pos}</span>}
+                  ? <img src={iconBase64[pos]} style={{ width: 22, height: 22, objectFit: 'contain', opacity: 0.55 }} />
+                  : <span style={{ fontSize: 10, color: '#6b7280', fontWeight: 700, display: 'flex' }}>{pos}</span>}
               </div>
 
               {/* 어웨이 평점 박스 */}
@@ -252,7 +253,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
 
               {/* 어웨이 선수명 */}
               <div style={{ flex: 1, paddingLeft: 12, display: 'flex' }}>
-                <span style={{ fontSize: 20, color: '#1f2937', fontWeight: 600, display: 'flex' }}>{away?.name ?? ''}</span>
+                <span style={{ fontSize: 20, color: '#111827', fontWeight: 800, fontStyle: 'italic', display: 'flex' }}>{away?.name ?? ''}</span>
               </div>
             </div>
           ))}
