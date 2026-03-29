@@ -147,7 +147,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         {/* 배경 이미지 */}
         {bgBase64 && (
           <img src={bgBase64} style={{
-            position: 'absolute', inset: 0,
+            position: 'absolute', top: 0, left: 0,
             width: '100%', height: '100%',
             objectFit: 'cover',
           }} />
@@ -155,8 +155,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
 
         {/* 흰색 오버레이 — 배경 밝히기 */}
         <div style={{
-          position: 'absolute', inset: 0,
-          background: 'rgba(255,255,255,0.72)',
+          position: 'absolute', top: 0, left: 0,
+          width: '100%', height: '100%',
+          background: 'rgba(255,255,255,0.60)',
           display: 'flex',
         }} />
 
